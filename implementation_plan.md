@@ -11,9 +11,9 @@ We have pivoted on several key areas to guarantee stability within the 24-hour h
 
 ## Open Questions
 
-> [!WARNING]
-> **Omium SDK Tracing Details**
-> You mentioned you would provide details on this later. When you are ready, please let me know if we are sending traces to `ingest.monium.yandex.cloud:443` with an API key, or if we should default to a local OpenTelemetry dashboard for the judges.
+> [!NOTE]
+> **Omium SDK Tracing — RESOLVED**
+> Traces exported to `ingest.monium.yandex.cloud:443` using API key `omium_poJ52g3sSBV6Cijv9kAi-HmAsqZiPptZNaSpLfofb-E`. Configured as OTLP gRPC exporter in `app/telemetry.py`.
 
 ## Proposed Changes
 
