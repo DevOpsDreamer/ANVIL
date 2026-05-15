@@ -1,0 +1,160 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap');
+
+:root {
+  --font-inter: 'Inter', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+}
+
+.material-symbols-outlined {
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+  vertical-align: middle;
+  font-size: 20px;
+}
+
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+  body {
+    background-color: #0B0E14;
+    color: #e1e2eb;
+    font-family: var(--font-inter);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.2);
+  }
+
+  ::selection {
+    background-color: #00f5ff;
+    color: #003739;
+  }
+}
+
+@layer components {
+  .glass-panel {
+    background: rgba(30, 41, 59, 0.4);
+    backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  .glow-cyan-border:focus-within {
+    border-color: #00dce5;
+    box-shadow: 0 0 15px rgba(0, 220, 229, 0.2);
+  }
+
+  .pulse-emerald {
+    box-shadow: 0 0 0 0 rgba(78, 222, 163, 0.7);
+    animation: pulse-emerald 2s infinite;
+  }
+
+  .scan-line-anim {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 2px;
+    background: linear-gradient(to right, transparent, rgba(0, 220, 229, 0.5), transparent);
+    animation: scan-line 4s linear infinite;
+    pointer-events: none;
+  }
+
+  .nav-link {
+    @apply flex items-center gap-3 py-3 px-4 transition-all duration-200;
+    color: #b9caca;
+  }
+
+  .nav-link:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: #e9feff;
+  }
+
+  .nav-link-active {
+    @apply flex items-center gap-3 py-3 px-4 transition-all duration-200;
+    background: rgba(233, 254, 255, 0.1);
+    color: #e9feff;
+    border-right: 2px solid #e9feff;
+  }
+
+  .btn-primary {
+    @apply px-4 py-2 font-semibold text-xs rounded transition-all duration-200;
+    background: #e9feff;
+    color: #0B0E14;
+    box-shadow: 0 0 10px rgba(0, 220, 229, 0.3);
+  }
+
+  .btn-primary:hover {
+    box-shadow: 0 0 20px rgba(0, 220, 229, 0.5);
+  }
+
+  .btn-outline {
+    @apply px-4 py-2 font-semibold text-xs rounded transition-all duration-200;
+    border: 1px solid #e9feff;
+    color: #e9feff;
+  }
+
+  .btn-outline:hover {
+    background: rgba(233, 254, 255, 0.05);
+  }
+}
+
+@keyframes pulse-emerald {
+  0% { box-shadow: 0 0 0 0 rgba(78, 222, 163, 0.4); }
+  70% { box-shadow: 0 0 0 10px rgba(78, 222, 163, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(78, 222, 163, 0); }
+}
+
+@keyframes scan-line {
+  0% { transform: translateY(-100%); }
+  100% { transform: translateY(1000%); }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-8px); }
+}
+
+@keyframes blink-cursor {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+.animate-float {
+  animation: float 3s ease-in-out infinite;
+}
+
+.animate-blink {
+  animation: blink-cursor 1s step-end infinite;
+}
+
+.font-mono {
+  font-family: var(--font-mono);
+}
+
+/* Petri net path animation */
+@keyframes dash-move {
+  from { stroke-dashoffset: 100; }
+  to { stroke-dashoffset: 0; }
+}
+
+.animated-path {
+  animation: dash-move 3s linear infinite;
+}
