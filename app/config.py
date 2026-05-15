@@ -30,10 +30,7 @@ SANDBOX_TIMEOUT_SECONDS: int = int(os.getenv("SANDBOX_TIMEOUT_SECONDS", "5"))
 SANDBOX_MAX_RETRIES: int = int(os.getenv("SANDBOX_MAX_RETRIES", "3"))
 
 # ── Omium / OpenTelemetry ─────────────────────────────────────────────────────
-OMIUM_API_KEY: str = os.getenv(
-    "OMIUM_API_KEY",
-    "omium_poJ52g3sSBV6Cijv9kAi-HmAsqZiPptZNaSpLfofb-E",
-)
+OMIUM_API_KEY: str = os.getenv("OMIUM_API_KEY", "")
 OMIUM_ENDPOINT: str = os.getenv(
     "OMIUM_ENDPOINT",
     "ingest.monium.yandex.cloud:443",
