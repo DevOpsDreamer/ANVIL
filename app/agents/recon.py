@@ -2,15 +2,18 @@
 Reconnaissance Agent — scans the target application and catalogs
 the attack surface into a strict ReconOutput schema.
 
-Uses the LLM to reason about discovered endpoints and cross-reference
-known vulnerability patterns.
+Supports two modes:
+  1. SOURCE CODE ANALYSIS (web app mode) — reads cloned repo files
+     and uses GPT-4o to identify vulnerabilities in the code.
+  2. HTTP PROBING (legacy mode) — probes a running target via HTTP
+     requests and identifies vulnerabilities from responses.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-from typing import Optional
+from typing import List, Optional
 
 import requests
 from openai import OpenAI
@@ -30,6 +33,117 @@ def _get_client() -> OpenAI:
         _client = OpenAI(api_key=OPENAI_API_KEY)
     return _client
 
+
+# ── Mode 1: Source Code Analysis ─────────────────────────────────────────────
+
+def run_recon_source(repo_dir: str, repo_url: str) -> ReconOutput:
+    """
+    Scan cloned source code for vulnerabilities.
+    Reads files from disk and sends them to GPT-4o for analysis.
+    """
+    from app.github_service import read_repo_files
+
+    with trace_operation(
+        "recon_agent_source",
+        attributes={"agent.name": "recon", "agent.mode": "source_code", "agent.repo_url": repo_url},
+    ) as span:
+        # Step 1: read source files
+        files = read_repo_files(repo_dir)
+        span.set_attribute("recon.file_count", len(files))
+
+        if not files:
+            logger.warning("No scannable files found in %s", repo_dir)
+            return ReconOutput(
+                target_url=repo_url,
+                detected_framework="Unknown",
+                vulnerable_endpoints=[],
+            )
+
+        # Step 2: build a compact code digest for the LLM
+        # Truncate individual files to keep total prompt size reasonable
+        code_digest_parts = []
+        total_chars = 0
+        max_total = 80_000  # ~20K tokens budget for code
+
+        for f in files:
+            content = f["content"]
+            if total_chars + len(content) > max_total:
+                remaining = max_total - total_chars
+                if remaining > 500:
+                    content = content[:remaining] + "\n... (truncated)"
+                else:
+                    break
+            code_digest_parts.append(f"### {f['path']}\n```\n{content}\n```")
+            total_chars += len(content)
+
+        code_digest = "\n\n".join(code_digest_parts)
+
+        # Step 3: LLM-assisted vulnerability analysis
+        client = _get_client()
+
+        example_json = json.dumps({
+            "target_url": repo_url,
+            "detected_framework": "Flask/Express/Django/etc",
+            "vulnerable_endpoints": [
+                {
+                    "path": "src/routes/files.py:45",
+                    "method": "GET",
+                    "injection_vector": "Path traversal via unsanitized user input in os.path.join"
+                }
+            ]
+        }, indent=2)
+
+        system_prompt = (
+            "You are an expert security code reviewer. Analyze the source code below "
+            "and identify ALL security vulnerabilities.\n\n"
+            "You MUST return valid JSON with EXACTLY this structure:\n"
+            f"```json\n{example_json}\n```\n\n"
+            "Rules:\n"
+            "- target_url: the repository URL (string)\n"
+            "- detected_framework: the main framework used in the project (string)\n"
+            "- vulnerable_endpoints: array of objects, each with:\n"
+            "  - path: file path and line number where the vulnerability exists (e.g. 'server.py:23')\n"
+            "  - method: HTTP method associated (GET/POST/etc), or GET if not applicable\n"
+            "  - injection_vector: detailed description of the vulnerability and how it can be exploited\n"
+            "- Focus on: path traversal, SQL injection, XSS, command injection, SSRF, "
+            "insecure deserialization, hardcoded secrets, auth bypass, IDOR\n"
+            "- Include ALL vulnerabilities found, ranked by severity\n"
+            "- Be specific about the exact line/function and the attack vector\n"
+            "- If no vulnerabilities found, return empty vulnerable_endpoints array\n"
+        )
+
+        response = client.chat.completions.create(
+            model=LLM_MODEL,
+            temperature=LLM_TEMPERATURE,
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"Repository: {repo_url}\n\nSource code:\n{code_digest}"},
+            ],
+        )
+
+        raw_json = response.choices[0].message.content
+        logger.info("LLM recon response: %s", raw_json[:500])
+        span.set_attribute("llm.prompt_tokens", response.usage.prompt_tokens)
+        span.set_attribute("llm.completion_tokens", response.usage.completion_tokens)
+        span.set_attribute("agent.decision_rationale", raw_json[:500])
+
+        # Step 4: validate through Pydantic contract
+        try:
+            result = ReconOutput.model_validate_json(raw_json)
+        except Exception as exc:
+            logger.warning("LLM output failed validation (%s), returning empty", exc)
+            result = ReconOutput(
+                target_url=repo_url,
+                detected_framework="Unknown",
+                vulnerable_endpoints=[],
+            )
+
+        logger.info("Source recon found %d vulnerable endpoints", len(result.vulnerable_endpoints))
+        return result
+
+
+# ── Mode 2: HTTP Probing (legacy) ────────────────────────────────────────────
 
 def _probe_target(target_url: str) -> str:
     """
@@ -81,12 +195,12 @@ def _probe_target(target_url: str) -> str:
 
 def run_recon(target_url: str) -> ReconOutput:
     """
-    Execute reconnaissance against *target_url* and return a typed
-    ReconOutput with the catalogued attack surface.
+    Execute reconnaissance against *target_url* using HTTP probing
+    and return a typed ReconOutput with the catalogued attack surface.
     """
     with trace_operation(
         "recon_agent",
-        attributes={"agent.name": "recon", "agent.target_url": target_url},
+        attributes={"agent.name": "recon", "agent.mode": "http_probe", "agent.target_url": target_url},
     ) as span:
         # Step 1: deterministic probe
         probe_data = _probe_target(target_url)

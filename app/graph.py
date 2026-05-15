@@ -310,3 +310,178 @@ def build_red_team_cpn() -> CPNEngine:
     )
 
     return engine
+
+
+# ── Build the Web App CPN ────────────────────────────────────────────────────
+
+def build_web_cpn(scan_id: str, emit_fn) -> CPNEngine:
+    """
+    Construct the CPN for the web app mode.
+    Uses source code analysis (not HTTP probing) and GitHub API for patching.
+    Emits SSE events via emit_fn after each transition.
+
+    emit_fn signature: async def emit(scan_id, stage, status, message, ...)
+    """
+    import asyncio
+    from app.agents.exploiter import run_exploit
+    from app.agents.patcher import run_patch_github
+    from app.agents.recon import run_recon_source
+    from app.agents.verifier import verify_exploit
+    from app.config import SANDBOX_MAX_RETRIES
+    from app.schemas import ScanStage
+
+    def _emit_sync(stage, status, message, **kwargs):
+        """Synchronously push an SSE event from a blocking thread."""
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                asyncio.run_coroutine_threadsafe(
+                    emit_fn(scan_id, stage, status, message, **kwargs),
+                    loop,
+                ).result(timeout=5)
+            else:
+                asyncio.run(emit_fn(scan_id, stage, status, message, **kwargs))
+        except Exception as exc:
+            logger.warning("Failed to emit SSE event: %s", exc)
+
+    engine = CPNEngine()
+
+    # ── Places ────────────────────────────────────────────────────────────
+    p_ingress       = engine.add_place("ingress", description="Scan received")
+    p_recon_ready   = engine.add_place("recon_ready", description="Ready to scan source code")
+    p_exploit_ready = engine.add_place("exploit_ready", description="Ready to exploit")
+    p_exploit_done  = engine.add_place("exploit_done", description="Exploit complete")
+    p_patch_ready   = engine.add_place("patch_ready", description="Ready to patch & PR")
+    p_patch_done    = engine.add_place("patch_done", terminal=True, description="PR created")
+    p_end_safe      = engine.add_place("end_safe", terminal=True, description="No vulnerability found")
+    p_end_error     = engine.add_place("end_error", terminal=True, description="Pipeline failed")
+
+    # ── T1: Ingress → Recon ───────────────────────────────────────────────
+    def t1_action(state: MasterState) -> MasterState:
+        state.current_node = "recon_ready"
+        return state
+
+    engine.add_transition("t1_start_recon", p_ingress, {"default": p_recon_ready}, t1_action)
+
+    # ── T2: Recon (source code analysis) ─────────────────────────────────
+    def t2_action(state: MasterState) -> MasterState:
+        try:
+            result = run_recon_source(state.repo_dir, state.repo_url or state.webhook.target_url)
+            state.recon = result
+            vuln_count = len(result.vulnerable_endpoints)
+
+            if result.vulnerable_endpoints:
+                _emit_sync(ScanStage.RECON, "done",
+                           f"Found {vuln_count} vulnerability(ies)",
+                           vuln_count=vuln_count, progress_pct=30)
+                state.current_node = "exploit_ready"
+            else:
+                _emit_sync(ScanStage.RECON, "done",
+                           "No vulnerabilities found — repo is clean!",
+                           vuln_count=0, progress_pct=100)
+                state.current_node = "end_safe"
+        except Exception as exc:
+            logger.error("Recon failed: %s", exc)
+            state.error = str(exc)
+            _emit_sync(ScanStage.RECON, "error", f"Recon failed: {exc}")
+            state.current_node = "end_error"
+        return state
+
+    engine.add_transition(
+        "t2_run_recon", p_recon_ready,
+        {"has_vulns": p_exploit_ready, "no_vulns": p_end_safe, "error": p_end_error},
+        t2_action,
+    )
+
+    # ── T3: Exploit ──────────────────────────────────────────────────────
+    def t3_action(state: MasterState) -> MasterState:
+        _emit_sync(ScanStage.EXPLOIT, "running",
+                    "Generating exploit payload...", progress_pct=40)
+        try:
+            result = run_exploit(state.recon)
+            state.exploit = result
+            _emit_sync(ScanStage.EXPLOIT, "done",
+                        f"Exploit {'confirmed' if result.vulnerability_confirmed else 'attempted'}",
+                        progress_pct=55)
+            state.current_node = "exploit_done"
+        except Exception as exc:
+            logger.error("Exploit failed: %s", exc)
+            state.error = str(exc)
+            _emit_sync(ScanStage.EXPLOIT, "error", f"Exploit failed: {exc}")
+            state.current_node = "end_error"
+        return state
+
+    engine.add_transition(
+        "t3_run_exploit", p_exploit_ready,
+        {"done": p_exploit_done, "error": p_end_error},
+        t3_action,
+    )
+
+    # ── T4: Verify ───────────────────────────────────────────────────────
+    def t4_action(state: MasterState) -> MasterState:
+        _emit_sync(ScanStage.VERIFY, "running",
+                    "Verifying exploit (deterministic)...", progress_pct=60)
+        result = verify_exploit(state.exploit)
+        state.verification = result
+
+        if result.verified:
+            _emit_sync(ScanStage.VERIFY, "done",
+                        f"Exploit verified: {result.reason[:100]}", progress_pct=70)
+            state.current_node = "patch_ready"
+        else:
+            state.retry_count += 1
+            if state.retry_count > SANDBOX_MAX_RETRIES:
+                logger.error("Max retries exceeded at verification")
+                state.error = f"Verification failed after {state.retry_count} retries: {result.reason}"
+                _emit_sync(ScanStage.VERIFY, "error",
+                            f"Max retries exceeded: {result.reason[:100]}")
+                state.current_node = "end_error"
+            else:
+                _emit_sync(ScanStage.VERIFY, "running",
+                            f"Verification failed (attempt {state.retry_count}/{SANDBOX_MAX_RETRIES}), retrying...",
+                            progress_pct=45)
+                state.current_node = "exploit_ready"
+        return state
+
+    engine.add_transition(
+        "t4_verify", p_exploit_done,
+        {"verified": p_patch_ready, "retry": p_exploit_ready, "fail": p_end_error},
+        t4_action,
+    )
+
+    # ── T5: Patch + GitHub PR ────────────────────────────────────────────
+    def t5_action(state: MasterState) -> MasterState:
+        _emit_sync(ScanStage.PATCH, "running",
+                    "Generating security fix...", progress_pct=75)
+        try:
+            result = run_patch_github(
+                recon=state.recon,
+                exploit=state.exploit,
+                verification=state.verification,
+                trace_id=state.trace_id,
+                github_token=state.github_token,
+                repo_url=state.repo_url,
+                repo_dir=state.repo_dir,
+                base_branch=state.base_branch,
+            )
+            state.patch = result
+
+            _emit_sync(ScanStage.PUSHING, "done",
+                        f"Pull Request created!",
+                        pr_url=result.pr_url, progress_pct=95)
+            state.current_node = "patch_done"
+        except Exception as exc:
+            logger.error("Patch failed: %s", exc)
+            state.error = str(exc)
+            _emit_sync(ScanStage.PATCH, "error", f"Patch failed: {exc}")
+            state.current_node = "end_error"
+        return state
+
+    engine.add_transition(
+        "t5_run_patch", p_patch_ready,
+        {"done": p_patch_done, "error": p_end_error},
+        t5_action,
+    )
+
+    return engine
+

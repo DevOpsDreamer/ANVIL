@@ -1,10 +1,10 @@
 """
-Patcher Agent — generates a code patch using AST modification,
-applies it to the target repository, and creates a Git commit.
+Patcher Agent — generates a code patch to fix the exploited vulnerability
+and creates a Pull Request on the user's GitHub repository.
 
-Instead of generating raw code strings (error-prone), the LLM produces
-a Python script that uses the `ast` module to programmatically rewrite
-the vulnerable node in the target file.
+Supports two modes:
+  1. GITHUB API MODE (web app) — pushes fix via PyGithub API and opens a PR
+  2. LOCAL GIT MODE (legacy) — commits fix to local git repo
 """
 
 from __future__ import annotations
@@ -49,6 +49,176 @@ def _run_git(repo_dir: str, *args: str) -> str:
     return result.stdout.strip()
 
 
+# ── Mode 1: GitHub API Patch (web app) ───────────────────────────────────────
+
+def run_patch_github(
+    recon: ReconOutput,
+    exploit: ExploitOutput,
+    verification: VerificationResult,
+    trace_id: str,
+    github_token: str,
+    repo_url: str,
+    repo_dir: str,
+    base_branch: str = "main",
+) -> PatchOutput:
+    """
+    Generate a fix and push it as a Pull Request to the user's GitHub repo
+    via the GitHub API (no local git needed for the push).
+    """
+    from app.github_service import create_branch_and_pr, parse_repo_full_name
+
+    with trace_operation(
+        "patcher_agent_github",
+        attributes={
+            "agent.name": "patcher",
+            "agent.mode": "github_api",
+            "agent.repo_url": repo_url,
+            "agent.trace_id": trace_id,
+        },
+    ) as span:
+        repo_full_name = parse_repo_full_name(repo_url)
+
+        # Step 1: Identify the vulnerable file and read it
+        vuln_path = None
+        if recon.vulnerable_endpoints:
+            raw_path = recon.vulnerable_endpoints[0].path
+            # Extract file path (strip line numbers like "server.py:23")
+            vuln_path = raw_path.split(":")[0] if ":" in raw_path else raw_path
+
+        # Try to find the file in the cloned repo
+        target_file = None
+        original_code = ""
+        if vuln_path and repo_dir:
+            candidate = Path(repo_dir) / vuln_path
+            if candidate.exists():
+                target_file = vuln_path
+                original_code = candidate.read_text(encoding="utf-8")
+            else:
+                # Try searching for the file by name
+                filename = Path(vuln_path).name
+                for fpath in Path(repo_dir).rglob(filename):
+                    target_file = str(fpath.relative_to(repo_dir)).replace("\\", "/")
+                    original_code = fpath.read_text(encoding="utf-8")
+                    break
+
+        if not target_file or not original_code:
+            raise RuntimeError(
+                f"Cannot locate vulnerable file '{vuln_path}' in cloned repo"
+            )
+
+        # Step 2: Ask LLM for the fix
+        client = _get_client()
+
+        system_prompt = (
+            "You are a security patch agent. Given the vulnerable source code and "
+            "the exploit details, generate a fixed version of the code that eliminates "
+            "the vulnerability. Return ONLY valid JSON:\n"
+            "{\n"
+            '  "fixed_code": "<the complete fixed source code>",\n'
+            '  "explanation": "<brief explanation of what was fixed>",\n'
+            '  "confidence": <float 0-1>\n'
+            "}\n"
+            "The fix should:\n"
+            "1. Sanitize user input to prevent the exploit\n"
+            "2. Keep all other functionality intact\n"
+            "3. Use secure coding practices (path canonicalization, input validation)\n"
+            "4. NOT add any comments referencing this tool or AI\n"
+        )
+
+        vuln_desc = (
+            recon.vulnerable_endpoints[0].injection_vector
+            if recon.vulnerable_endpoints else "unknown"
+        )
+
+        user_prompt = (
+            f"## Vulnerable File: {target_file}\n"
+            f"```python\n{original_code}\n```\n\n"
+            f"## Vulnerability Details\n"
+            f"- Type: {vuln_desc}\n"
+            f"- Exploit payload:\n```python\n{exploit.exploit_payload_used}\n```\n"
+            f"- Sandbox stdout: {exploit.sandbox_stdout[:500]}\n"
+            f"- Verification: {verification.reason}\n"
+        )
+
+        response = client.chat.completions.create(
+            model=LLM_MODEL,
+            temperature=LLM_TEMPERATURE,
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+        )
+
+        raw = json.loads(response.choices[0].message.content)
+        fixed_code = raw["fixed_code"]
+        explanation = raw["explanation"]
+        confidence = float(raw.get("confidence", 0.8))
+
+        span.set_attribute("llm.prompt_tokens", response.usage.prompt_tokens)
+        span.set_attribute("llm.completion_tokens", response.usage.completion_tokens)
+        span.set_attribute("agent.decision_rationale", explanation[:500])
+
+        # Step 3: Build the PR content
+        fix_branch = f"anvil/fix-{trace_id[:12]}"
+        pr_title = f"🛡️ Security Fix: {vuln_desc[:80]} — Anvil Scan {trace_id[:8]}"
+        pr_body = (
+            f"## 🔍 Vulnerability Report\n\n"
+            f"**Repository**: {repo_url}\n"
+            f"**File**: `{target_file}`\n"
+            f"**Type**: {vuln_desc}\n\n"
+            f"## 💣 Proof of Exploitation\n\n"
+            f"```\n{exploit.sandbox_stdout[:1000]}\n```\n\n"
+            f"## 🩹 Fix Applied\n\n{explanation}\n\n"
+            f"**Confidence**: {confidence:.0%}\n"
+            f"**Trace ID**: `{trace_id}`\n\n"
+            f"---\n"
+            f"*This PR was automatically generated by [Anvil](https://github.com) — "
+            f"Autonomous Security Remediation Platform*"
+        )
+
+        # Step 4: Push to GitHub and create PR
+        pr_url = create_branch_and_pr(
+            token=github_token,
+            repo_full_name=repo_full_name,
+            base_branch=base_branch,
+            fix_branch=fix_branch,
+            fixed_files=[{"path": target_file, "content": fixed_code}],
+            pr_title=pr_title,
+            pr_body=pr_body,
+        )
+
+        span.set_attribute("patch.branch", fix_branch)
+        span.set_attribute("patch.confidence", confidence)
+        span.set_attribute("patch.pr_url", pr_url)
+
+        # Generate a simple diff for display
+        diff_lines = []
+        orig_lines = original_code.splitlines()
+        fixed_lines = fixed_code.splitlines()
+        for line in orig_lines:
+            if line not in fixed_lines:
+                diff_lines.append(f"- {line}")
+        for line in fixed_lines:
+            if line not in orig_lines:
+                diff_lines.append(f"+ {line}")
+        unified_diff = "\n".join(diff_lines) if diff_lines else "(no diff available)"
+
+        result = PatchOutput(
+            file_modified=target_file,
+            unified_diff=unified_diff,
+            pull_request_title=pr_title,
+            pull_request_body=pr_body,
+            confidence_score=confidence,
+            pr_url=pr_url,
+        )
+
+        logger.info("PR created: %s (confidence=%.0f%%)", pr_url, confidence * 100)
+        return result
+
+
+# ── Mode 2: Local Git Patch (legacy) ─────────────────────────────────────────
+
 def run_patch(
     recon: ReconOutput,
     exploit: ExploitOutput,
@@ -63,6 +233,7 @@ def run_patch(
         "patcher_agent",
         attributes={
             "agent.name": "patcher",
+            "agent.mode": "local_git",
             "agent.target_url": recon.target_url,
             "agent.trace_id": trace_id,
         },

@@ -13,3 +13,9 @@ opentelemetry-instrumentation-sqlite3
 requests
 Flask
 openai
+PyGithub
+httpx
+itsdangerous
+python-multipart
+python-dotenv
+sse-starlette

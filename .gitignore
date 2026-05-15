@@ -24,3 +24,9 @@ __pycache__/
 # OS Files
 .DS_Store
 Thumbs.db
+
+# Scan workspace (cloned repos)
+scans/
+
+# Temp files
+*.tmp

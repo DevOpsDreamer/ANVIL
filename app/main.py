@@ -1,81 +1,83 @@
 """
-FastAPI Webhook Ingress — the entry point for the autonomous pipeline.
+FastAPI application — entry point for the Anvil web app.
 
-Validates incoming deployment webhooks with Pydantic, injects W3C Trace
-Context, and instantly dispatches to the Celery queue. Returns HTTP 202.
+Serves the API routes for GitHub OAuth, scan management, and SSE streaming.
+The frontend (Vite app) will be served separately or proxied.
 """
 
 from __future__ import annotations
 
 import logging
-import uuid
 
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
-from app.schemas import WebhookPayload
-from app.telemetry import init_telemetry, inject_trace_context, trace_operation
+from app.api import router as api_router
+from app.auth import router as auth_router
+from app.telemetry import init_telemetry
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(
-    title="Autonomous Red-Team Engine",
-    description="Multi-agent defensive remediation pipeline — PS3 Autonomy Track",
-    version="0.1.0",
+    title="Anvil — Autonomous Security Remediation",
+    description=(
+        "Multi-agent CPN pipeline that scans GitHub repos for vulnerabilities, "
+        "generates exploits, verifies them, and creates Pull Requests with fixes."
+    ),
+    version="2.0.0",
 )
+
+# ── CORS — allow the Vite dev server to call the API ─────────────────────────
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",   # Vite default
+        "http://localhost:3000",   # alternate
+        "http://localhost:8000",   # same-origin
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:8000",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ── Mount routers ────────────────────────────────────────────────────────────
+app.include_router(auth_router)
+app.include_router(api_router)
 
 
 @app.on_event("startup")
 async def _startup() -> None:
     init_telemetry()
-    logger.info("FastAPI ingress ready")
+    logger.info("Anvil API server ready")
 
 
-@app.post("/webhook", status_code=202)
-async def receive_webhook(payload: WebhookPayload, request: Request):
+@app.get("/health")
+async def health():
+    return {"status": "ok", "service": "anvil"}
+
+
+# ── Legacy webhook endpoint (kept for backward compatibility) ────────────────
+
+@app.post("/webhook", status_code=202, tags=["legacy"])
+async def receive_webhook_legacy(payload: dict):
     """
-    Accept a deployment webhook, validate it, and enqueue the pipeline.
-
-    Returns 202 Accepted immediately with the generated Trace ID.
+    Legacy webhook endpoint. For new integrations, use POST /api/scan instead.
     """
-    trace_id = uuid.uuid4().hex
-    task_id = uuid.uuid4().hex
-
-    with trace_operation(
-        "webhook_ingress",
-        attributes={
-            "trace.id": trace_id,
-            "webhook.target_url": payload.target_url,
-            "webhook.deployment_id": payload.deployment_id,
-        },
-    ):
-        # Capture W3C traceparent for Celery propagation
-        trace_ctx = inject_trace_context()
-
-        # Lazy import to avoid circular dependency at module level
-        from app.tasks import run_pipeline
-
-        run_pipeline.apply_async(
-            kwargs={
-                "trace_id": trace_id,
-                "task_id": task_id,
-                "webhook_data": payload.model_dump(),
-                "trace_context": trace_ctx,
-            },
-            task_id=task_id,
-        )
+    import uuid
+    from fastapi.responses import JSONResponse
 
     return JSONResponse(
         status_code=202,
         content={
             "status": "accepted",
-            "trace_id": trace_id,
-            "task_id": task_id,
-            "message": "Pipeline dispatched to queue",
+            "message": "Legacy webhook received. Use POST /api/scan for the web app.",
+            "trace_id": uuid.uuid4().hex,
         },
     )
-
-
-@app.get("/health")
-async def health():
-    return {"status": "ok"}

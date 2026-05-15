@@ -8,6 +8,7 @@ between agents.
 
 from __future__ import annotations
 
+from datetime import datetime
 from enum import Enum
 from typing import List, Optional
 
@@ -82,6 +83,9 @@ class PatchOutput(BaseModel):
     confidence_score: float = Field(
         ..., ge=0.0, le=1.0, description="Model confidence in the patch correctness"
     )
+    pr_url: Optional[str] = Field(
+        None, description="URL of the created GitHub Pull Request"
+    )
 
 
 # ── Verifier ─────────────────────────────────────────────────────────────────
@@ -115,3 +119,59 @@ class MasterState(BaseModel):
     patch: Optional[PatchOutput] = None
     error: Optional[str] = None
     completed: bool = False
+    # Web-app additions
+    repo_url: Optional[str] = None
+    repo_dir: Optional[str] = None
+    github_token: Optional[str] = None
+    base_branch: str = "main"
+
+
+# ── Web App Schemas ──────────────────────────────────────────────────────────
+
+class ScanRequest(BaseModel):
+    """Request body for POST /api/scan."""
+    repo_url: str = Field(..., description="GitHub repo URL, e.g. https://github.com/user/repo")
+    base_branch: str = Field("main", description="Branch to scan and base the fix PR against")
+
+
+class ScanStage(str, Enum):
+    """Pipeline stages for SSE progress updates."""
+    QUEUED = "queued"
+    CLONING = "cloning"
+    RECON = "recon"
+    EXPLOIT = "exploit"
+    VERIFY = "verify"
+    PATCH = "patch"
+    PUSHING = "pushing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class ScanEvent(BaseModel):
+    """A single SSE event pushed to the frontend."""
+    scan_id: str
+    stage: ScanStage
+    status: str = Field(..., description="'running' | 'done' | 'error'")
+    message: str = ""
+    detail: Optional[str] = None
+    pr_url: Optional[str] = None
+    vuln_count: Optional[int] = None
+    progress_pct: int = Field(0, ge=0, le=100)
+
+
+class ScanResult(BaseModel):
+    """Full scan result returned by GET /api/scan/{scan_id}."""
+    scan_id: str
+    repo_url: str
+    status: str
+    stage: ScanStage
+    vulnerabilities: List[VulnerableEndpoint] = []
+    pr_url: Optional[str] = None
+    error: Optional[str] = None
+    created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    completed_at: Optional[str] = None
+    recon: Optional[ReconOutput] = None
+    exploit: Optional[ExploitOutput] = None
+    verification: Optional[VerificationResult] = None
+    patch: Optional[PatchOutput] = None
+

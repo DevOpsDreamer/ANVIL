@@ -4,6 +4,11 @@ All secrets and environment toggles live here.
 """
 
 import os
+from pathlib import Path
+from dotenv import load_dotenv
+
+# Load .env from the project root (one level above app/)
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 # ── LLM Provider ──────────────────────────────────────────────────────────────
 OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
@@ -43,3 +48,16 @@ TARGET_REPO_DIR: str = os.getenv("TARGET_REPO_DIR", "target_app")
 REDIS_TASK_STREAM: str = "agent:tasks"
 REDIS_RESULT_STREAM: str = "agent:results"
 REDIS_CONSUMER_GROUP: str = "orchestrator-group"
+
+# ── GitHub OAuth ──────────────────────────────────────────────────────────────
+GITHUB_CLIENT_ID: str = os.getenv("GITHUB_CLIENT_ID", "")
+GITHUB_CLIENT_SECRET: str = os.getenv("GITHUB_CLIENT_SECRET", "")
+GITHUB_REDIRECT_URI: str = os.getenv(
+    "GITHUB_REDIRECT_URI", "http://localhost:8000/api/auth/callback"
+)
+
+# ── Session / Security ───────────────────────────────────────────────────────
+SESSION_SECRET: str = os.getenv("SESSION_SECRET", "change-me-in-production-32bytes!")
+
+# ── Scan Workspace ───────────────────────────────────────────────────────────
+SCAN_TEMP_DIR: str = os.getenv("SCAN_TEMP_DIR", str(Path(__file__).resolve().parent.parent / "scans"))
