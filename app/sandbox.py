@@ -150,12 +150,24 @@ def execute_payload(
         tmp_path = Path(tmp.name)
 
     try:
+        # Minimal safe environment: allows networking and Python imports
+        # but strips sensitive vars like API keys, credentials, etc.
+        import os as _os
+        safe_env = {
+            "PATH": _os.environ.get("PATH", ""),
+            "SYSTEMROOT": _os.environ.get("SYSTEMROOT", r"C:\Windows"),
+            "TEMP": _os.environ.get("TEMP", r"C:\Windows\Temp"),
+            "TMP": _os.environ.get("TMP", r"C:\Windows\Temp"),
+            "PYTHONPATH": _os.environ.get("PYTHONPATH", ""),
+            "VIRTUAL_ENV": _os.environ.get("VIRTUAL_ENV", ""),
+        }
+
         result = subprocess.run(
             [sys.executable, str(tmp_path)],
             capture_output=True,
             text=True,
             timeout=timeout,
-            env={},  # completely stripped environment
+            env=safe_env,
             cwd=".",
         )
         return (

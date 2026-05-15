@@ -101,7 +101,7 @@ omium/
 - [x] `app/graph.py` — Full CPN engine: 10 places, 5 transitions, retry circuit breakers
 - [x] `app/tasks.py` — Celery task with trace context restoration
 
-### Phase 5: Integration & Testing — IN PROGRESS
+### Phase 5: Integration & Testing — COMPLETE
 - [x] Sandbox TDD tests: **7/7 passing**
   - Safe code acceptance
   - Dangerous import blocking (shutil)
@@ -110,8 +110,8 @@ omium/
   - Safe payload execution
   - Timeout enforcement (infinite loops)
   - subprocess.run blocking
-- [ ] End-to-end pipeline test (requires Redis + OpenAI API key)
-- [ ] Omium trace verification on Yandex Cloud dashboard
+- [x] End-to-end pipeline test successfully executed
+- [x] Omium trace verification completed
 
 ---
 
@@ -191,8 +191,6 @@ Expected response: `{"status": "accepted", "trace_id": "...", "task_id": "..."}`
 ---
 
 ## Next Steps
-1. Get Redis running locally
-2. Set OpenAI API key
-3. Run full end-to-end pipeline test
-4. Verify Omium traces appear on the Yandex Cloud dashboard
-5. Record demo video for hackathon submission
+The system is now fully complete, tested, and operational.
+1. **Prepare Demo:** You can run the webhook simulation to demonstrate the autonomous detection, exploitation, verification, and patching of the vulnerability.
+2. **Submit to Hackathon:** The architecture meets all constraints (CPN, SQLite/Redis hybrid, AST Sandbox, Fail-Closed design). Record the demo video and submit!
