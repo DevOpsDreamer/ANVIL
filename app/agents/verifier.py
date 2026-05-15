@@ -13,20 +13,17 @@ for the Orchestrator to trigger a re-generation or graceful halt.
 from __future__ import annotations
 
 import logging
-import re
 
 from app.schemas import ExploitOutput, VerificationResult
 from app.telemetry import trace_operation
 
 logger = logging.getLogger(__name__)
 
-# Patterns that prove real exploitation (not hallucinated)
-_SUCCESS_MARKERS = [
-    "EXPLOIT_SUCCESS",
-    "FLAG{",
-]
+# The single deterministic success marker the Exploiter must print
+_SUCCESS_MARKER = "EXPLOIT_SUCCESS"
 
-_SECRET_PATTERN = re.compile(r"FLAG\{[A-Za-z0-9_\-]+\}")
+# Minimum stdout length (excluding marker) to consider as real evidence
+_MIN_EVIDENCE_LENGTH = 10
 
 
 def verify_exploit(exploit: ExploitOutput) -> VerificationResult:
@@ -35,8 +32,9 @@ def verify_exploit(exploit: ExploitOutput) -> VerificationResult:
 
     Rules:
     1. vulnerability_confirmed must be True
-    2. sandbox_stdout must contain at least one success marker
-    3. If a FLAG pattern exists, it must match the expected regex
+    2. sandbox_stdout must contain the EXPLOIT_SUCCESS marker
+    3. stdout must contain meaningful content beyond just the marker
+       (prevents hallucinated empty exploits)
     """
     with trace_operation(
         "verifier_agent",
@@ -59,16 +57,15 @@ def verify_exploit(exploit: ExploitOutput) -> VerificationResult:
             return VerificationResult(
                 verified=False,
                 reason=reason,
-                expected_pattern="EXPLOIT_SUCCESS in stdout",
+                expected_pattern=f"{_SUCCESS_MARKER} in stdout",
                 actual_value=stdout[:200],
             )
 
-        # ── Check 2: stdout contains success marker ──────────────────────
-        has_marker = any(marker in stdout for marker in _SUCCESS_MARKERS)
-        if not has_marker:
+        # ── Check 2: stdout contains the success marker ──────────────────
+        if _SUCCESS_MARKER not in stdout:
             reason = (
-                f"stdout does not contain any success marker "
-                f"({', '.join(_SUCCESS_MARKERS)}). "
+                f"stdout does not contain the success marker "
+                f"'{_SUCCESS_MARKER}'. "
                 "The exploit may have hallucinated success."
             )
             span.set_attribute("verification.result", "REJECTED")
@@ -77,16 +74,19 @@ def verify_exploit(exploit: ExploitOutput) -> VerificationResult:
             return VerificationResult(
                 verified=False,
                 reason=reason,
-                expected_pattern=" | ".join(_SUCCESS_MARKERS),
+                expected_pattern=_SUCCESS_MARKER,
                 actual_value=stdout[:200],
             )
 
-        # ── Check 3: if FLAG pattern exists, validate format ─────────────
-        flag_match = _SECRET_PATTERN.search(stdout)
-        if exploit.extracted_secret and not flag_match:
+        # ── Check 3: stdout has meaningful evidence beyond the marker ─────
+        # Strip the marker and check if there's real content
+        evidence_text = stdout.replace(_SUCCESS_MARKER, "").strip()
+        if len(evidence_text) < _MIN_EVIDENCE_LENGTH:
             reason = (
-                "extracted_secret was set but stdout does not contain "
-                "a valid FLAG{...} pattern. Possible hallucination."
+                f"stdout contains '{_SUCCESS_MARKER}' but has no meaningful "
+                f"evidence ({len(evidence_text)} chars of content). "
+                "The exploit may have printed the marker without actually "
+                "extracting any data. This looks like a hallucinated exploit."
             )
             span.set_attribute("verification.result", "REJECTED")
             span.set_attribute("verification.reason", reason)
@@ -94,23 +94,24 @@ def verify_exploit(exploit: ExploitOutput) -> VerificationResult:
             return VerificationResult(
                 verified=False,
                 reason=reason,
-                expected_pattern=_SECRET_PATTERN.pattern,
-                actual_value=exploit.extracted_secret,
+                expected_pattern=f"{_SUCCESS_MARKER} + meaningful evidence",
+                actual_value=stdout[:200],
             )
 
         # ── All checks passed ────────────────────────────────────────────
-        verified_flag = flag_match.group(0) if flag_match else None
+        has_evidence = bool(exploit.exploit_evidence)
         reason = (
-            "Exploitation verified: stdout contains success marker"
-            + (f" and valid flag {verified_flag}" if verified_flag else "")
+            f"Exploitation verified: stdout contains '{_SUCCESS_MARKER}' "
+            f"with {len(evidence_text)} chars of evidence"
+            + (f" (evidence captured)" if has_evidence else "")
             + "."
         )
         span.set_attribute("verification.result", "VERIFIED")
-        span.set_attribute("verification.flag", verified_flag or "none")
+        span.set_attribute("verification.evidence_length", len(evidence_text))
         logger.info("Verification PASSED: %s", reason)
         return VerificationResult(
             verified=True,
             reason=reason,
-            expected_pattern=" | ".join(_SUCCESS_MARKERS),
+            expected_pattern=_SUCCESS_MARKER,
             actual_value=stdout[:200],
         )
