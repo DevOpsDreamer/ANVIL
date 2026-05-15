@@ -234,7 +234,12 @@ def start_scan(token: str, repo_url: str, base_branch: str = "main") -> str:
     }
 
     # Fire-and-forget in the event loop
-    loop = asyncio.get_event_loop()
+    # asyncio.get_running_loop() is the modern API (Python 3.10+)
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
     task = loop.create_task(run_scan(scan_id, token, repo_url, base_branch))
     _scans[scan_id]["task"] = task
 

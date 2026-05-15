@@ -1,0 +1,33 @@
+
+# ─────────────────────────────────────────────
+# ANVIL Backend — Environment Variables
+# Copy this to .env and fill in your values
+# ─────────────────────────────────────────────
+
+# ── LLM (required) ───────────────────────────
+OPENAI_API_KEY=sk-your-openai-key-here
+LLM_MODEL=gpt-4o
+LLM_TEMPERATURE=0.8# ── GitHub OAuth App (required for web UI) ───
+# Create at: https://github.com/settings/developers → New OAuth App
+# Homepage URL:       http://localhost:5173
+# Callback URL:       http://localhost:8000/api/auth/callback
+GITHUB_CLIENT_ID=Ov23liy22StmABM9AcmJ
+GITHUB_CLIENT_SECRET=84d1d7dad440437220960c9171d16e59625cc514
+GITHUB_REDIRECT_URI=http://localhost:8000/api/auth/callback
+
+# ── Session security ──────────────────────────
+# Generate with: python -c "import secrets; print(secrets.token_hex(32))"
+SESSION_SECRET=a3f8b2c1d4e5f6071829304a5b6c7d8e
+
+# ── Infrastructure (localhost defaults — no Docker needed) ───────────────────
+REDIS_URL=redis://localhost:6379/0
+SQLITE_DB_PATH=master_state.db
+
+# ── Sandbox ───────────────────────────────────
+SANDBOX_TIMEOUT_SECONDS=5
+SANDBOX_MAX_RETRIES=3
+
+# ── Omium / OpenTelemetry ─────────────────────
+OMIUM_API_KEY=omium_poJ52g3sSBV6Cijv9kAi-HmAsqZiPptZNaSpLfofb-E
+OMIUM_ENDPOINT=ingest.monium.yandex.cloud:443
+SERVICE_NAME=red-team-engine

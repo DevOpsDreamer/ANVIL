@@ -8,6 +8,10 @@ The frontend (Vite app) will be served separately or proxied.
 from __future__ import annotations
 
 import logging
+from fastapi import FastAPI
+from starlette.middleware.sessions import SessionMiddleware
+from app.config import SESSION_SECRET
+
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -29,6 +33,10 @@ app = FastAPI(
         "generates exploits, verifies them, and creates Pull Requests with fixes."
     ),
     version="2.0.0",
+)
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=SESSION_SECRET
 )
 
 # ── CORS — allow the Vite dev server to call the API ─────────────────────────

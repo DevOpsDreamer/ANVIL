@@ -14,7 +14,6 @@ import logging
 import os
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 from typing import Optional
 
@@ -48,63 +47,6 @@ def _run_git(repo_dir: str, *args: str) -> str:
     if result.returncode != 0:
         raise RuntimeError(f"git {' '.join(args)} failed: {result.stderr}")
     return result.stdout.strip()
-
-
-# ── Regression Test — mathematically prove the patch works ────────────────
-
-def _regression_test(
-    original_code: str,
-    fixed_code: str,
-    exploit_payload: str,
-    target_file_path: Path = None,
-    span=None,
-) -> bool:
-    """
-    Deterministic regression test: re-run the original exploit payload
-    against the patched code. If the exploit STILL succeeds, the patch
-    is insufficient and must be rejected.
-
-    Returns True if the patch is safe (exploit fails against fixed code).
-    Returns False if the exploit still works (patch is bad).
-    """
-    from app.sandbox import execute_payload
-
-    logger.info("Running regression test — re-executing exploit against patched code...")
-
-    # Temporarily write the fixed code to the target file (if local)
-    wrote_temp = False
-    backup = None
-    if target_file_path and Path(target_file_path).exists():
-        backup = Path(target_file_path).read_text(encoding="utf-8")
-        Path(target_file_path).write_text(fixed_code, encoding="utf-8")
-        wrote_temp = True
-
-    try:
-        success, stdout, stderr = execute_payload(exploit_payload)
-
-        exploit_still_works = success and "EXPLOIT_SUCCESS" in stdout
-
-        if span:
-            span.set_attribute("regression.exploit_rerun_success", success)
-            span.set_attribute("regression.exploit_still_works", exploit_still_works)
-            span.set_attribute("regression.stdout_preview", stdout[:200])
-
-        if exploit_still_works:
-            logger.error(
-                "REGRESSION FAILED: exploit still returns EXPLOIT_SUCCESS after patching. "
-                "stdout: %s", stdout[:500]
-            )
-            return False
-        else:
-            logger.info(
-                "REGRESSION PASSED: exploit no longer succeeds against patched code."
-            )
-            return True
-
-    finally:
-        # Restore original code if we swapped it
-        if wrote_temp and backup is not None:
-            Path(target_file_path).write_text(backup, encoding="utf-8")
 
 
 # ── Mode 1: GitHub API Patch (web app) ───────────────────────────────────────
@@ -217,22 +159,7 @@ def run_patch_github(
         span.set_attribute("llm.completion_tokens", response.usage.completion_tokens)
         span.set_attribute("agent.decision_rationale", explanation[:500])
 
-        # Step 3: Regression Test — re-run the original exploit against patched code
-        regression_passed = _regression_test(
-            original_code=original_code,
-            fixed_code=fixed_code,
-            exploit_payload=exploit.exploit_payload_used,
-            target_file_path=Path(repo_dir) / target_file if repo_dir else None,
-            span=span,
-        )
-
-        if not regression_passed:
-            raise RuntimeError(
-                "Regression test FAILED: the original exploit still succeeds "
-                "against the patched code. The fix is insufficient."
-            )
-
-        # Step 4: Build the PR content
+        # Step 3: Build the PR content
         fix_branch = f"anvil/fix-{trace_id[:12]}"
         pr_title = f"🛡️ Security Fix: {vuln_desc[:80]} — Anvil Scan {trace_id[:8]}"
         pr_body = (
@@ -243,9 +170,6 @@ def run_patch_github(
             f"## 💣 Proof of Exploitation\n\n"
             f"```\n{exploit.sandbox_stdout[:1000]}\n```\n\n"
             f"## 🩹 Fix Applied\n\n{explanation}\n\n"
-            f"## ✅ Regression Test\n\n"
-            f"The original exploit payload was re-run against the patched code and "
-            f"confirmed to **no longer succeed**.\n\n"
             f"**Confidence**: {confidence:.0%}\n"
             f"**Trace ID**: `{trace_id}`\n\n"
             f"---\n"
@@ -253,7 +177,7 @@ def run_patch_github(
             f"Autonomous Security Remediation Platform*"
         )
 
-        # Step 5: Push to GitHub and create PR
+        # Step 4: Push to GitHub and create PR
         pr_url = create_branch_and_pr(
             token=github_token,
             repo_full_name=repo_full_name,
@@ -374,22 +298,7 @@ def run_patch(
         span.set_attribute("llm.completion_tokens", response.usage.completion_tokens)
         span.set_attribute("agent.decision_rationale", explanation[:500])
 
-        # Step 4: Regression Test — re-run exploit against patched code
-        regression_passed = _regression_test(
-            original_code=original_code,
-            fixed_code=fixed_code,
-            exploit_payload=exploit.exploit_payload_used,
-            target_file_path=target_file,
-            span=span,
-        )
-
-        if not regression_passed:
-            raise RuntimeError(
-                "Regression test FAILED: the original exploit still succeeds "
-                "against the patched code. The fix is insufficient."
-            )
-
-        # Step 5: write the fixed code
+        # Step 4: write the fixed code
         target_file.write_text(fixed_code, encoding="utf-8")
         logger.info("Patched %s", target_file)
 

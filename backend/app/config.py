@@ -1,6 +1,8 @@
 """
 Central configuration for the Autonomous Red-Team Engine.
 All secrets and environment toggles live here.
+
+Localhost mode: no Docker required. Redis and SQLite run directly on the host.
 """
 
 import os
@@ -15,13 +17,13 @@ OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
 LLM_MODEL: str = os.getenv("LLM_MODEL", "gpt-4o")
 LLM_TEMPERATURE: float = float(os.getenv("LLM_TEMPERATURE", "0.0"))
 
-# ── Redis ─────────────────────────────────────────────────────────────────────
+# ── Redis — points to localhost by default (no Docker) ────────────────────────
 REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
-# ── SQLite ────────────────────────────────────────────────────────────────────
+# ── SQLite — stored in the backend directory ──────────────────────────────────
 SQLITE_DB_PATH: str = os.getenv("SQLITE_DB_PATH", "master_state.db")
 
-# ── Celery ────────────────────────────────────────────────────────────────────
+# ── Celery (optional background workers) ─────────────────────────────────────
 CELERY_BROKER_URL: str = os.getenv("CELERY_BROKER_URL", REDIS_URL)
 CELERY_RESULT_BACKEND: str = os.getenv("CELERY_RESULT_BACKEND", REDIS_URL)
 
@@ -30,7 +32,10 @@ SANDBOX_TIMEOUT_SECONDS: int = int(os.getenv("SANDBOX_TIMEOUT_SECONDS", "5"))
 SANDBOX_MAX_RETRIES: int = int(os.getenv("SANDBOX_MAX_RETRIES", "3"))
 
 # ── Omium / OpenTelemetry ─────────────────────────────────────────────────────
-OMIUM_API_KEY: str = os.getenv("OMIUM_API_KEY", "")
+OMIUM_API_KEY: str = os.getenv(
+    "OMIUM_API_KEY",
+    "omium_poJ52g3sSBV6Cijv9kAi-HmAsqZiPptZNaSpLfofb-E",
+)
 OMIUM_ENDPOINT: str = os.getenv(
     "OMIUM_ENDPOINT",
     "ingest.monium.yandex.cloud:443",
@@ -57,4 +62,12 @@ GITHUB_REDIRECT_URI: str = os.getenv(
 SESSION_SECRET: str = os.getenv("SESSION_SECRET", "change-me-in-production-32bytes!")
 
 # ── Scan Workspace ───────────────────────────────────────────────────────────
-SCAN_TEMP_DIR: str = os.getenv("SCAN_TEMP_DIR", str(Path(__file__).resolve().parent.parent / "scans"))
+# Cloned repos are stored here during a scan (auto-cleaned after the run).
+# Defaults to a "scans/" folder inside the backend directory.
+SCAN_TEMP_DIR: str = os.getenv(
+    "SCAN_TEMP_DIR",
+    str(Path(__file__).resolve().parent.parent / "scans"),
+)
+
+# Ensure the scans directory exists at startup
+Path(SCAN_TEMP_DIR).mkdir(parents=True, exist_ok=True)

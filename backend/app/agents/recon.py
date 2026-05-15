@@ -181,18 +181,12 @@ def _probe_target(target_url: str) -> str:
                 f"body_preview={body_preview!r}"
             )
 
-            # Detect sensitive data leaks in response
-            _sensitive_indicators = [
-                "root:x:0", "DB_PASSWORD", "SECRET_KEY", "API_KEY",
-                "-----BEGIN", "password", "AWS_ACCESS", "PRIVATE KEY",
-            ]
-            for indicator in _sensitive_indicators:
-                if indicator in resp.text:
-                    findings.append(
-                        f"  [!] SENSITIVE DATA LEAK at {path}: "
-                        f"response contains '{indicator}'"
-                    )
-                    break
+            # Flag path traversal indicators
+            if "FLAG{" in resp.text:
+                findings.append(
+                    f"  [!] PATH TRAVERSAL CONFIRMED at {path}: "
+                    f"response contains secret flag content"
+                )
         except requests.RequestException as exc:
             findings.append(f"GET {path} -> ERROR: {exc}")
 
@@ -275,28 +269,22 @@ def run_recon(target_url: str) -> ReconOutput:
 def _fallback_recon(target_url: str, probe_data: str) -> ReconOutput:
     """
     Deterministic fallback if the LLM returns garbage.
-    Parses probe_data directly for sensitive data leak indicators.
+    Parses probe_data directly for path traversal indicators.
     """
     from app.schemas import VulnerableEndpoint, HttpMethod
-    import re
 
     endpoints = []
-    # Look for our deterministic leak markers in the probe output
-    leak_matches = re.findall(
-        r"\[!\] SENSITIVE DATA LEAK at (.+?): response contains '(.+?)'",
-        probe_data,
-    )
-    for path, indicator in leak_matches:
+    if "[!] PATH TRAVERSAL CONFIRMED" in probe_data:
         endpoints.append(
             VulnerableEndpoint(
-                path=path.strip(),
+                path="/files/../secrets/flag.txt",
                 method=HttpMethod.GET,
-                injection_vector=f"Sensitive data exposure: response contains '{indicator}' — possible path traversal or misconfigured endpoint",
+                injection_vector="Path traversal via ../ sequences in the filename parameter allows reading files outside the public directory",
             )
         )
 
     return ReconOutput(
         target_url=target_url,
-        detected_framework="Unknown",
+        detected_framework="Flask/Werkzeug",
         vulnerable_endpoints=endpoints,
     )

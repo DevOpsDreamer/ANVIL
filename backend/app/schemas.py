@@ -65,8 +65,8 @@ class ExploitOutput(BaseModel):
     sandbox_stdout: str = Field(
         ..., description="Raw stdout captured from the sandbox execution"
     )
-    exploit_evidence: Optional[str] = Field(
-        None, description="Evidence of successful exploitation extracted from stdout (e.g. leaked secrets, file contents, env vars)"
+    extracted_secret: Optional[str] = Field(
+        None, description="The secret flag extracted from the target, if any"
     )
 
 
