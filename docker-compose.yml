@@ -1,43 +1,26 @@
 version: '3.8'
 
 services:
-  aegis-backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  backend:
+    build: 
+      context: .
+      dockerfile: backend/Dockerfile
     ports:
       - "8000:8000"
     environment:
+      - REDIS_URL=redis://redis:6379
+      - DATABASE_URL=sqlite:///./anvil.db
       - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - GITHUB_TOKEN=${GITHUB_TOKEN}
-      - SQLITE_DB_PATH=/app/data/aegis.db
-      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
-    volumes:
-      - aegis_data:/app/data
-      - /var/run/docker.sock:/var/run/docker.sock # Required to spawn sandbox containers
     depends_on:
-      - aegis-sandbox-image
-    restart: unless-stopped
+      - redis
 
-  aegis-frontend:
+  target_app:
     build:
-      context: ./frontend
-      dockerfile: Dockerfile
+      context: ./target_app
     ports:
-      - "5173:5173"
-    environment:
-      - VITE_API_URL=http://localhost:8000
-    depends_on:
-      - aegis-backend
-    restart: unless-stopped
-
-  # Dummy service to build the sandbox image, so the backend can use it
-  aegis-sandbox-image:
-    build:
-      context: ./backend/docker
-      dockerfile: Dockerfile.sandbox
-    image: aegis-sandbox:latest
-    command: ["echo", "Sandbox image built"]
-
-volumes:
-  aegis_data:
+      - "5000:5000"

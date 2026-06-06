@@ -1,0 +1,117 @@
+<?xml version="1.0" ?>
+<pnml>
+	<net id="anvil_cpn" type="http://www.pnml.org/version-2009/grammar/ptnet">
+		<page id="page1">
+			<place id="precon_pending">
+				<name>
+					<text>precon_pending</text>
+				</name>
+			</place>
+			<place id="precon_done">
+				<name>
+					<text>precon_done</text>
+				</name>
+			</place>
+			<place id="pexploit_ready">
+				<name>
+					<text>pexploit_ready</text>
+				</name>
+			</place>
+			<place id="pexploit_done">
+				<name>
+					<text>pexploit_done</text>
+				</name>
+			</place>
+			<place id="ppatch_ready">
+				<name>
+					<text>ppatch_ready</text>
+				</name>
+			</place>
+			<place id="ppatch_done">
+				<name>
+					<text>ppatch_done</text>
+				</name>
+			</place>
+			<place id="perror">
+				<name>
+					<text>perror</text>
+				</name>
+			</place>
+			<transition id="t1_recon">
+				<name>
+					<text>t1_recon</text>
+				</name>
+			</transition>
+			<arc id="a1" source="precon_pending" target="t1_recon"/>
+			<arc id="a2" source="t1_recon" target="precon_done">
+				<name>
+					<text>vulns_found</text>
+				</name>
+			</arc>
+			<arc id="a3" source="t1_recon" target="perror">
+				<name>
+					<text>clean</text>
+				</name>
+			</arc>
+			<transition id="t2_route">
+				<name>
+					<text>t2_route</text>
+				</name>
+			</transition>
+			<arc id="a4" source="precon_done" target="t2_route"/>
+			<arc id="a5" source="t2_route" target="pexploit_ready">
+				<name>
+					<text>vulns_found</text>
+				</name>
+			</arc>
+			<arc id="a6" source="t2_route" target="perror">
+				<name>
+					<text>clean</text>
+				</name>
+			</arc>
+			<transition id="t3_exploit">
+				<name>
+					<text>t3_exploit</text>
+				</name>
+			</transition>
+			<arc id="a7" source="pexploit_ready" target="t3_exploit"/>
+			<arc id="a8" source="t3_exploit" target="pexploit_done">
+				<name>
+					<text>ok</text>
+				</name>
+			</arc>
+			<transition id="t4_verify">
+				<name>
+					<text>t4_verify</text>
+				</name>
+			</transition>
+			<arc id="a9" source="pexploit_done" target="t4_verify"/>
+			<arc id="a10" source="t4_verify" target="ppatch_ready">
+				<name>
+					<text>verified</text>
+				</name>
+			</arc>
+			<arc id="a11" source="t4_verify" target="pexploit_ready">
+				<name>
+					<text>retry</text>
+				</name>
+			</arc>
+			<arc id="a12" source="t4_verify" target="perror">
+				<name>
+					<text>exhausted</text>
+				</name>
+			</arc>
+			<transition id="t5_patch">
+				<name>
+					<text>t5_patch</text>
+				</name>
+			</transition>
+			<arc id="a13" source="ppatch_ready" target="t5_patch"/>
+			<arc id="a14" source="t5_patch" target="ppatch_done">
+				<name>
+					<text>ok</text>
+				</name>
+			</arc>
+		</page>
+	</net>
+</pnml>

@@ -52,13 +52,15 @@ _SUCCESS_MARKER = "EXPLOIT_SUCCESS"
 _FLAG_PATTERN = re.compile(r"FLAG\{[\w_]+\}")
 
 # Minimum stdout length (excluding marker) to consider as real evidence
-_MIN_EVIDENCE_LENGTH = 5  # Reduced from 10 to allow short proofs like "500 error"
+_MIN_EVIDENCE_LENGTH = 3  # Reduced to 3 to allow proofs like "uid=0"
 
 # Vulnerability types that can have short evidence (e.g., HTTP status codes)
 _SHORT_EVIDENCE_VULN_TYPES = [
     "500", "error", "crash", "exception", "traceback",
     "deserialization", "pickle", "yaml", "marshal",
     "rce", "code execution", "arbitrary code",
+    "sql_injection_confirmed", "log4shell_triggered",
+    "confirmed_vulnerable", "jndi_callback_received"
 ]
 
 

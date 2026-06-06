@@ -1,13 +1,13 @@
 import pytest
 from app.graph import CPNEngine, Place, Transition
-from app.schemas import MasterState, PlaceName
+from app.schemas import MasterState, PlaceName, PlaceName
 
 def test_cpn_basic_routing():
     engine = CPNEngine()
     
-    p_start = engine.add_place("start")
-    p_middle = engine.add_place("middle")
-    p_end = engine.add_place("end", terminal=True)
+    p_start = engine.add_place(PlaceName.PRECON_PENDING.value)
+    p_middle = engine.add_place(PlaceName.PRECON_DONE.value)
+    p_end = engine.add_place(PlaceName.PEXPLOIT_READY.value, terminal=True)
     
     def action_start(state: MasterState):
         state.retry_count += 1
@@ -27,10 +27,10 @@ def test_cpn_basic_routing():
         action=lambda s: (s, "finish")
     )
     
-    state = MasterState(trace_id="123", task_id="456", current_node="start")
+    state = MasterState(trace_id="123", task_id="456", current_node=PlaceName.PRECON_PENDING.value)
     final_state = engine.run(state)
     
-    assert final_state.current_node == "end"
+    assert final_state.current_node == PlaceName.PEXPLOIT_READY.value
     assert final_state.retry_count == 1
     assert final_state.completed is True
 
@@ -53,7 +53,7 @@ def test_cpn_validation():
 
 def test_cpn_deadlock():
     engine = CPNEngine()
-    p_start = engine.add_place("start")
+    p_start = engine.add_place(PlaceName.PRECON_PENDING.value)
     
     # Guard prevents firing
     engine.add_transition(
@@ -64,7 +64,7 @@ def test_cpn_deadlock():
         guard=lambda s: False
     )
     
-    state = MasterState(trace_id="123", task_id="456", current_node="start")
+    state = MasterState(trace_id="123", task_id="456", current_node=PlaceName.PRECON_PENDING.value)
     final_state = engine.run(state)
     
     assert final_state.current_node == PlaceName.PERROR.value

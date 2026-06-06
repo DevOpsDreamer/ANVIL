@@ -450,67 +450,55 @@ def run_recon_source(repo_dir: str, repo_url: str, emit_fn=None) -> ReconOutput:
         if emit_fn:
             emit_fn(ScanStage.RECON, "running", f"Found {total_file_count} scannable files. Splitting into {num_batches} batches for AI analysis...", progress_pct=18)
 
-        # Step 3: Try LLM analysis first
-        all_endpoints = []
-        detected_framework = "Unknown"
-        llm_failed = False
-
-        try:
-            client = _get_client()
-            system_prompt = _build_system_prompt(repo_url)
-
-            for i, batch in enumerate(batches, 1):
-                logger.info(
-                    "Recon batch %d/%d: analyzing %d files (%s ...)",
-                    i, num_batches, len(batch),
-                    ", ".join(f["path"] for f in batch[:3]),
-                )
-                
-                if emit_fn:
-                    emit_fn(ScanStage.RECON, "running", f"Analyzing batch {i}/{num_batches} with AI model ({len(batch)} files)...", progress_pct=18 + int((i / num_batches) * 10))
-
-                batch_endpoints = _analyze_batch(
-                    client, batch, repo_url, system_prompt, i, num_batches,
-                )
-                all_endpoints.extend(batch_endpoints)
-
-                logger.info(
-                    "Recon batch %d/%d: found %d vulnerabilities",
-                    i, num_batches, len(batch_endpoints),
-                )
-                
-                if emit_fn:
-                    emit_fn(ScanStage.RECON, "running", f"Batch {i}/{num_batches} complete: found {len(batch_endpoints)} potential issues", progress_pct=18 + int((i / num_batches) * 10) + 2)
-                
-                # Extract framework from first successful batch
-                if detected_framework == "Unknown" and batch_endpoints:
-                    # Try to detect framework from file extensions and imports
-                    detected_framework = _detect_framework_from_files(batch)
-        except Exception as exc:
-            logger.warning("LLM analysis failed: %s - falling back to deterministic scan", exc)
-            llm_failed = True
-            span.add_event("llm_failed_fallback_to_deterministic")
-
-        # Step 4: ALWAYS run deterministic scan as a complement
-        # This ensures we catch vulnerabilities even if LLM misses them
+        # Step 3: ALWAYS run deterministic scan FIRST
         logger.info("Running deterministic vulnerability scan...")
         if emit_fn:
-            emit_fn(ScanStage.RECON, "running", "Running deterministic fallback scan...", progress_pct=29)
+            emit_fn(ScanStage.RECON, "running", "Running deterministic scan...", progress_pct=29)
             
         deterministic_vulns = _deterministic_vuln_scan(files, repo_url)
+        all_endpoints = []
+        detected_framework = _detect_framework_from_files(files)
+        llm_failed = False
+        llm_used = False
         
-        # Merge LLM and deterministic results
         if deterministic_vulns:
-            logger.info("Deterministic scan found %d vulnerabilities", len(deterministic_vulns))
+            logger.info("Deterministic scan found %d vulnerabilities, skipping LLM.", len(deterministic_vulns))
             all_endpoints.extend(deterministic_vulns)
             span.set_attribute("recon.deterministic_vuln_count", len(deterministic_vulns))
-        
-        if llm_failed:
             span.set_attribute("recon.used_deterministic_fallback", True)
-        
-        # Detect framework if not already detected
-        if detected_framework == "Unknown":
-            detected_framework = _detect_framework_from_files(files)
+        else:
+            # Step 4: Try LLM analysis
+            llm_used = True
+            try:
+                client = _get_client()
+                system_prompt = _build_system_prompt(repo_url)
+
+                for i, batch in enumerate(batches, 1):
+                    logger.info(
+                        "Recon batch %d/%d: analyzing %d files (%s ...)",
+                        i, num_batches, len(batch),
+                        ", ".join(f["path"] for f in batch[:3]),
+                    )
+                    
+                    if emit_fn:
+                        emit_fn(ScanStage.RECON, "running", f"Analyzing batch {i}/{num_batches} with AI model ({len(batch)} files)...", progress_pct=18 + int((i / num_batches) * 10))
+
+                    batch_endpoints = _analyze_batch(
+                        client, batch, repo_url, system_prompt, i, num_batches,
+                    )
+                    all_endpoints.extend(batch_endpoints)
+
+                    logger.info(
+                        "Recon batch %d/%d: found %d vulnerabilities",
+                        i, num_batches, len(batch_endpoints),
+                    )
+                    
+                    if emit_fn:
+                        emit_fn(ScanStage.RECON, "running", f"Batch {i}/{num_batches} complete: found {len(batch_endpoints)} potential issues", progress_pct=18 + int((i / num_batches) * 10) + 2)
+            except Exception as exc:
+                logger.error("LLM analysis failed: %s", exc)
+                llm_failed = True
+                span.add_event("llm_failed_fallback_to_deterministic")
 
         # Step 5: deduplicate endpoints (same file+method+vector = same vuln)
         seen = set()
@@ -525,6 +513,7 @@ def run_recon_source(repo_dir: str, repo_url: str, emit_fn=None) -> ReconOutput:
             target_url=repo_url,
             detected_framework=detected_framework,
             vulnerable_endpoints=unique_endpoints,
+            llm_used=llm_used,
         )
 
         span.set_attribute("recon.total_vulns", len(unique_endpoints))
@@ -606,65 +595,74 @@ def run_recon(target_url: str) -> ReconOutput:
         logger.info("Recon probe complete:\n%s", probe_data)
         span.set_attribute("recon.probe_lines", probe_data.count("\n") + 1)
 
-        # Step 2: LLM-assisted analysis with structured output
-        client = _get_client()
-
-        # Provide a concrete JSON example to anchor the LLM's output
-        example_json = json.dumps({
-            "target_url": "http://example.com",
-            "detected_framework": "Flask/Werkzeug",
-            "vulnerable_endpoints": [
-                {
-                    "path": "/files/../secrets/flag.txt",
-                    "method": "GET",
-                    "injection_vector": "Path traversal via ../ sequences in filename parameter"
-                }
-            ]
-        }, indent=2)
-
-        system_prompt = (
-            "You are a security reconnaissance agent. Analyze the HTTP probe "
-            "results below and identify ALL vulnerable endpoints.\n\n"
-            "You MUST return valid JSON with EXACTLY this structure:\n"
-            f"```json\n{example_json}\n```\n\n"
-            "Rules:\n"
-            "- target_url: the base URL of the target (string)\n"
-            "- detected_framework: the server/framework from headers (string)\n"
-            "- vulnerable_endpoints: array of objects, each with path, method, injection_vector\n"
-            "- method must be one of: GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS\n"
-            "- Focus on path traversal, injection, SSRF vulnerabilities\n"
-            "- If a probe returned secret/flag content, that endpoint IS vulnerable\n"
-            "- Do NOT return an empty object. Always include all three required fields.\n"
-        )
-
-        response = client.chat.completions.create(
-            model=LLM_MODEL,
-            temperature=LLM_TEMPERATURE,
-            response_format={"type": "json_object"},
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Target: {target_url}\n\nProbe results:\n{probe_data}"},
-            ],
-        )
-
-        raw_json = response.choices[0].message.content
-        if raw_json:
-            logger.info("LLM recon response: %s", raw_json[:500])
-            span.set_attribute("agent.decision_rationale", raw_json[:500])
+        # Step 2: Deterministic scan first
+        fallback_result = _fallback_recon(target_url, probe_data)
+        llm_used = False
         
-        if response.usage:
-            span.set_attribute("llm.prompt_tokens", response.usage.prompt_tokens)
-            span.set_attribute("llm.completion_tokens", response.usage.completion_tokens)
+        if fallback_result.vulnerable_endpoints:
+            logger.info("Deterministic probe found vulnerabilities, skipping LLM.")
+            return fallback_result
 
-        # Step 3: validate through Pydantic contract
+        # Step 3: LLM-assisted analysis with structured output
+        llm_used = True
         try:
+            client = _get_client()
+
+            # Provide a concrete JSON example to anchor the LLM's output
+            example_json = json.dumps({
+                "target_url": "http://example.com",
+                "detected_framework": "Flask/Werkzeug",
+                "vulnerable_endpoints": [
+                    {
+                        "path": "/files/../secrets/flag.txt",
+                        "method": "GET",
+                        "injection_vector": "Path traversal via ../ sequences in filename parameter"
+                    }
+                ]
+            }, indent=2)
+
+            system_prompt = (
+                "You are a security reconnaissance agent. Analyze the HTTP probe "
+                "results below and identify ALL vulnerable endpoints.\n\n"
+                "You MUST return valid JSON with EXACTLY this structure:\n"
+                f"```json\n{example_json}\n```\n\n"
+                "Rules:\n"
+                "- target_url: the base URL of the target (string)\n"
+                "- detected_framework: the server/framework from headers (string)\n"
+                "- vulnerable_endpoints: array of objects, each with path, method, injection_vector\n"
+                "- method must be one of: GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS\n"
+                "- Focus on path traversal, injection, SSRF vulnerabilities\n"
+                "- If a probe returned secret/flag content, that endpoint IS vulnerable\n"
+                "- Do NOT return an empty object. Always include all three required fields.\n"
+            )
+
+            response = client.chat.completions.create(
+                model=LLM_MODEL,
+                temperature=LLM_TEMPERATURE,
+                response_format={"type": "json_object"},
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": f"Target: {target_url}\n\nProbe results:\n{probe_data}"},
+                ],
+            )
+
+            raw_json = response.choices[0].message.content
+            if raw_json:
+                logger.info("LLM recon response: %s", raw_json[:500])
+                span.set_attribute("agent.decision_rationale", raw_json[:500])
+            
+            if response.usage:
+                span.set_attribute("llm.prompt_tokens", response.usage.prompt_tokens)
+                span.set_attribute("llm.completion_tokens", response.usage.completion_tokens)
+
             if not raw_json:
                 raise ValueError("LLM returned empty response")
             result = ReconOutput.model_validate_json(raw_json)
+            result.llm_used = True
         except Exception as exc:
-            # Fallback: if LLM output is malformed, construct from probe data
-            logger.warning("LLM output failed validation (%s), using probe fallback", exc)
-            result = _fallback_recon(target_url, probe_data)
+            # Fallback: if LLM call fails or output is malformed
+            logger.warning("LLM analysis failed (%s), returning clean output", exc)
+            result = ReconOutput(target_url=target_url, detected_framework="Unknown", vulnerable_endpoints=[], llm_used=False)
 
         logger.info("Recon found %d vulnerable endpoints", len(result.vulnerable_endpoints))
         return result
@@ -697,4 +695,5 @@ def _fallback_recon(target_url: str, probe_data: str) -> ReconOutput:
         target_url=target_url,
         detected_framework="Unknown",
         vulnerable_endpoints=endpoints,
+        llm_used=False,
     )

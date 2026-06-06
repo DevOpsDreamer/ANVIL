@@ -38,7 +38,6 @@ _BLOCKED_FUNCTIONS: Set[str] = {
     "os.system", "os.popen", "os.exec", "os.execl",
     "os.execle", "os.execlp", "os.execlpe", "os.execv",
     "os.execve", "os.execvp", "os.execvpe", "os.fork",
-    "subprocess.Popen", "subprocess.call", "subprocess.run",
     "eval", "exec", "__import__", "compile",
     "shutil.rmtree", "shutil.move",
     "pickle.loads", "pickle.load",

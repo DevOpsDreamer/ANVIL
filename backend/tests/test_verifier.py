@@ -58,7 +58,7 @@ def test_verifier_hmac_mode_mismatch():
     exploit = ExploitOutput(
         vulnerability_confirmed=True,
         exploit_payload_used="cat /tmp/secret_flag.txt",
-        sandbox_stdout=f"HMAC_ATTESTATION:invalid_hex_token:{ts}:file_read",
+        sandbox_stdout=f"HMAC_ATTESTATION:{'0'*64}:{ts}:file_read",
         attempt_number=1
     )
     result = verify_exploit(exploit, material)

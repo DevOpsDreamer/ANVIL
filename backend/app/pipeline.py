@@ -29,6 +29,7 @@ from app.schemas import (
     ScanResult,
     ScanStage,
     WebhookPayload,
+    PlaceName,
 )
 from app.telemetry import init_telemetry, trace_operation
 
@@ -173,7 +174,7 @@ async def run_scan(
             state = MasterState(
                 trace_id=trace_id,
                 task_id=task_id,
-                current_node="ingress",
+                current_node=PlaceName.PRECON_PENDING.value,
                 repo_url=repo_url,
                 repo_dir=str(repo_dir),
                 webhook=webhook,

@@ -1,0 +1,41 @@
+{
+  "scan_id": "dvwa-scan-test",
+  "target": "OWASP DVWA",
+  "vulnerabilities": [
+    {
+      "id": "vuln-sql-001",
+      "type": "SQL Injection",
+      "endpoint": "/vulnerabilities/sqli/?id=",
+      "payload": "' OR '1'='1' --",
+      "status": "exploited",
+      "patch_applied": true,
+      "confidence": 0.95
+    },
+    {
+      "id": "vuln-cmd-002",
+      "type": "Command Injection",
+      "endpoint": "/vulnerabilities/exec/",
+      "payload": "127.0.0.1; whoami",
+      "status": "exploited",
+      "patch_applied": true,
+      "confidence": 0.98
+    },
+    {
+      "id": "vuln-xss-003",
+      "type": "Reflected XSS",
+      "endpoint": "/vulnerabilities/xss_r/?name=",
+      "payload": "<script>alert(1)</script>",
+      "status": "exploited",
+      "patch_applied": true,
+      "confidence": 0.90
+    }
+  ],
+  "metrics": {
+    "total_scanned": 3,
+    "exploited": 3,
+    "patched": 3,
+    "false_positives": 0,
+    "esr_percentage": 100.0,
+    "fpr_percentage": 0.0
+  }
+}

@@ -351,14 +351,7 @@ def build_web_cpn(
         PlaceName.PEXPLOIT_DONE.value,
         description="Exploit executed, awaiting verification",
     )
-    p_verify_pending = engine.add_place(
-        PlaceName.PVERIFY_PENDING.value,
-        description="Verification in progress",
-    )
-    p_verify_done = engine.add_place(
-        PlaceName.PVERIFY_DONE.value,
-        description="Verification complete, routing decision pending",
-    )
+
     p_patch_ready = engine.add_place(
         PlaceName.PPATCH_READY.value,
         description="Ready for patch generation",
@@ -631,14 +624,7 @@ def build_red_team_cpn() -> CPNEngine:
         PlaceName.PEXPLOIT_DONE.value,
         description="Exploit executed",
     )
-    p_verify_pending = engine.add_place(
-        PlaceName.PVERIFY_PENDING.value,
-        description="Verification pending",
-    )
-    p_verify_done = engine.add_place(
-        PlaceName.PVERIFY_DONE.value,
-        description="Verification done",
-    )
+
     p_patch_ready = engine.add_place(
         PlaceName.PPATCH_READY.value,
         description="Patch ready",

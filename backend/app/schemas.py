@@ -95,6 +95,7 @@ class ReconOutput(BaseModel):
     vulnerable_endpoints: List[VulnerableEndpoint] = Field(
         ..., description="Catalogued attack surface without raw HTTP responses"
     )
+    llm_used: bool = Field(True, description="Whether LLM was used to generate this output")
 
 
 # ── Agent 2: Exploitation ────────────────────────────────────────────────────
@@ -127,6 +128,7 @@ class ExploitOutput(BaseModel):
     extracted_secret: Optional[str] = Field(
         None, description="Secret value extracted from sandbox stdout (e.g. FLAG{...})"
     )
+    llm_used: bool = Field(True, description="Whether LLM was used to generate this output")
 
 
 # ── Agent 3: Patching ────────────────────────────────────────────────────────
@@ -153,6 +155,7 @@ class PatchOutput(BaseModel):
     tests_passed: Optional[bool] = Field(
         None, description="Whether the target app's tests passed after patching"
     )
+    llm_used: bool = Field(True, description="Whether LLM was used to generate this output")
 
 
 # ── Verifier ─────────────────────────────────────────────────────────────────
