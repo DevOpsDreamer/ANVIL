@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "domains": [
+    "localhost",
+    "127.0.0.1",
+    "*.github.com",
+    "github.com"
+  ]
+}

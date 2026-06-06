@@ -13,7 +13,7 @@ We have pivoted on several key areas to guarantee stability within the 24-hour h
 
 > [!NOTE]
 > **Omium SDK Tracing — RESOLVED**
-> Traces exported to `ingest.monium.yandex.cloud:443` using API key `omium_poJ52g3sSBV6Cijv9kAi-HmAsqZiPptZNaSpLfofb-E`. Configured as OTLP gRPC exporter in `app/telemetry.py`.
+> Traces exported to `ingest.monium.yandex.cloud:443` using API key `[REDACTED — use OTEL_EXPORTER_OTLP_ENDPOINT env var]`. Configured as OTLP gRPC exporter in `app/telemetry.py`.
 
 ## Proposed Changes
 

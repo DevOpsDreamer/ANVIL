@@ -72,15 +72,15 @@ The result: a system that autonomously clones a GitHub repository, scans its sou
 
 ---
 
-## 🌟 Powered by Omium AI
+## 🌟 Production-Grade Observability
 
-A.E.G.I.S. is deeply integrated with the **Omium SDK**, which was an absolute game-changer for building this project quickly and reliably. Developing a multi-agent orchestration engine with strict execution gates is notoriously difficult to debug. **Omium AI** transformed our development experience by:
+A.E.G.I.S. is deeply integrated with **OpenTelemetry**, ensuring full transparency into the multi-agent pipeline. Developing an orchestration engine with strict execution gates is notoriously difficult to debug, making observability mandatory:
 
-- **Uncovering Hidden Bugs:** We used Omium to trace execution paths across background threads and asynchronous boundaries. When our orchestration engine initially suffered from race conditions or infinite retry loops, Omium's distributed tracing instantly pinpointed the failing transitions, saving us hours of manual debugging.
-- **Auditing LLM Decisions:** By attaching structured attributes (`llm.prompt_tokens`, `agent.decision_rationale`) to Omium spans, we could visualize exactly *why* our agents failed on specific payload generations, allowing us to rapidly iterate on prompt engineering.
-- **Monitoring Pipeline Failures:** Omium helped us identify race conditions between our SSE real-time streaming and background SQLite checkpoints. The end-to-end observability made the invisible visible.
+- **Uncovering Hidden Bugs:** W3C Trace Context propagates across background threads and asynchronous boundaries. If the CPN orchestration suffers from a deadlock or unexpected routing, distributed tracing pinpoints the exact transition failure.
+- **Auditing LLM Decisions:** By attaching structured attributes (`gen_ai.usage.prompt_tokens`, `gen_ai.rationale`) to spans, the pipeline visualizes exactly *why* agents fail on specific payload generations, enabling rapid iteration on prompt engineering.
+- **Monitoring Pipeline Failures:** End-to-end observability makes the invisible visible, tracking state progression seamlessly across the FastAPI backend, background workers, and the AST-validated sandbox.
 
-Without Omium, tracking the state of an autonomous red-team agent across a FastAPI backend, background workers, and sandboxed subprocesses would have been a massive black box. **Omium is the observability backbone of A.E.G.I.S.**
+OpenTelemetry is the observability backbone of A.E.G.I.S.
 
 ---
 
@@ -92,9 +92,9 @@ Without Omium, tracking the state of an autonomous red-team agent across a FastA
 
 ## Key Differentiators
 
-### Production-Grade Observability (Omium SDK + W3C Trace Context)
+### Production-Grade Observability (Pure OpenTelemetry + W3C Trace Context)
 
-A.E.G.I.S. does not operate as a black box. Every pipeline execution emits structured OpenTelemetry spans with rich attributes — `cpn.transition`, `cpn.step`, `cpn.retry_count`, `llm.prompt_tokens`, `sandbox.stdout_length`, `verification.result`, and `patch.confidence`. The Omium SDK exports traces via OTLP gRPC to `ingest.monium.yandex.cloud:443`.
+A.E.G.I.S. does not operate as a black box. Every pipeline execution emits structured OpenTelemetry spans with rich attributes — `cpn.transition`, `cpn.step`, `cpn.retry_count`, `gen_ai.usage.prompt_tokens`, `sandbox.stdout_length`, `verification.result`, and `patch.confidence`. Traces are exported natively via OTLP.
 
 Critically, **W3C Trace Context is propagated across asynchronous boundaries** (from the FastAPI request handler into `asyncio.to_thread` and through the CPN engine), ensuring the entire multi-agent pipeline — from the initial HTTP request to the final GitHub PR — appears as a single, connected distributed trace. This is not bolted-on logging; it is first-class, standards-compliant observability.
 
@@ -128,7 +128,7 @@ While many AI security tools stop at static analysis or simple patch generation,
 | **Orchestration** | **Non-deterministic LLM routing** (ReAct/Chain-of-Thought). Prone to infinite loops, getting stuck, and unpredictable execution paths. | **Colored Petri Net (CPN)**. 100% deterministic, mathematically sound state machine with hard retry limits. The LLM does the thinking; Python does the routing. |
 | **Verification** | **LLM-based validation** ("Did this patch work? Yes!"). High risk of hallucinated success where the agent lies to itself. | **Cryptographic Verification Gate**. Pure deterministic Python checking for sandbox execution stdout markers (`FLAG{...}`). Zero LLM hallucination surface. |
 | **Execution** | **Theoretical patching**. Agents generate fixes based on assumed vulnerabilities without proving exploitability. | **Live Sandbox Exploitation**. ANVIL writes an actual Python exploit, fires it at an isolated sandbox, and *proves* the vulnerability exists before patching. |
-| **Observability** | **Black-box execution**. Terminal logs only. Impossible to trace token usage, exact prompts, or decision trees across distributed boundaries. | **Omium SDK + W3C Trace Context**. Every action emits structured OpenTelemetry spans. The entire async pipeline is a single, visualizable distributed trace. |
+| **Observability** | **Black-box execution**. Terminal logs only. Impossible to trace token usage, exact prompts, or decision trees across distributed boundaries. | **Pure OpenTelemetry + W3C Trace Context**. Every action emits structured OpenTelemetry spans. The entire async pipeline is a single, visualizable distributed trace. |
 | **Safety** | **Runaway execution**. Agents can hallucinate dangerous system commands (`rm -rf`) if given execution access. | **AST-Validated Sandbox**. Fail-closed code execution filtering dangerous imports and calls, combined with a SHA-256 circuit breaker for exploit deduplication. |
 
 ---
@@ -240,7 +240,7 @@ This section maps A.E.G.I.S.'s architecture directly to the hackathon evaluation
 | Criterion | How A.E.G.I.S. Addresses It |
 |-----------|----------------------|
 | **Autonomy** | The entire pipeline — from repository cloning through vulnerability discovery, exploitation, verification, patching, and Pull Request creation — executes without any human intervention. The user provides a repo URL; A.E.G.I.S. delivers a fix PR. Zero manual steps. |
-| **Observability** | Every CPN transition, LLM call, sandbox execution, and verification decision emits structured OpenTelemetry spans via the Omium SDK. W3C Trace Context propagation across async boundaries produces a single connected trace for the full pipeline. This is not logging — it is production-grade distributed tracing. |
+| **Observability** | Every CPN transition, LLM call, sandbox execution, and verification decision emits structured OpenTelemetry spans. W3C Trace Context propagation across async boundaries produces a single connected trace for the full pipeline. This is not logging — it is production-grade distributed tracing. |
 | **Reliability** | The fail-closed architecture prevents runaway execution: AST-validated sandbox blocks dangerous code before execution; deterministic Verifier rejects hallucinated results; SHA-256 circuit breaker prevents identical payload retries; 3-retry cap prevents death spirals; 20-step CPN limit prevents infinite traversal; SQLite WAL checkpointing after every transition enables crash recovery. |
 | **Real-World Integration** | A.E.G.I.S. operates against live GitHub repositories using the GitHub REST API (OAuth, clone, branch, commit, PR) and OpenAI GPT-4o. No mock services, no simulated APIs. |
 | **Technical Complexity** | Multi-agent CPN orchestration, AST-based code sandboxing, W3C trace propagation across async boundaries, real-time SSE streaming, signed cookie authentication, and strict Pydantic v2 inter-agent contracts — all integrated into a cohesive, production-quality system. |
@@ -276,7 +276,7 @@ This section maps A.E.G.I.S.'s architecture directly to the hackathon evaluation
 | OpenAI GPT-4o | LLM backbone for Recon, Exploit, and Patcher agents |
 | GitHub REST API (PyGithub) | Repository operations: clone, branch, commit, Pull Request |
 | GitHub OAuth 2.0 | User authentication with signed HttpOnly cookies |
-| Omium SDK (OTLP gRPC) | Distributed tracing with W3C Trace Context propagation |
+| OpenTelemetry (OTLP) | Distributed tracing with W3C Trace Context propagation |
 | sse-starlette | Server-Sent Events for real-time frontend updates |
 
 ---
@@ -315,7 +315,7 @@ anvil/
 |   |   +-- schemas.py              # 12 Pydantic v2 data contracts
 |   |   +-- db.py                    # SQLite WAL checkpointing + execution log
 |   |   +-- config.py               # Central configuration (env vars)
-|   |   +-- telemetry.py            # Omium/OTLP exporter + W3C propagation
+|   |   +-- telemetry.py            # OpenTelemetry setup + W3C propagation
 |   |   +-- github_service.py       # GitHub API: clone, branch, PR
 |   |   +-- celery_app.py           # Celery broker (Redis-backed)
 |   |   +-- state_synchronizer.py   # Redis Stream to SQLite merge daemon
@@ -470,7 +470,7 @@ chmod +x start.sh
 
 ## Observability and Tracing
 
-A.E.G.I.S. exports distributed traces via the Omium SDK using the OTLP gRPC protocol. Every span includes structured attributes:
+A.E.G.I.S. exports distributed traces via OpenTelemetry using the OTLP protocol. Every span includes structured attributes:
 
 | Span Category | Attributes |
 |--------------|------------|
@@ -556,12 +556,9 @@ A.E.G.I.S. draws on ideas from several areas of academic and industry research. 
 
 ---
 
-## Contributors
+## Author
 
 - [Aniket Krishna Ingale](https://github.com/DevOpsDreamer)
-- [Sumeet Ravindra Gite](https://github.com/Sumeet2386)
-- [Harshal Andhale](https://github.com/HarshalAndhale9657)
-- [Ansh Jaiswal](https://github.com/Ansh-1019)
 
 ---
 

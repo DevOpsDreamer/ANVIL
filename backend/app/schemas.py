@@ -12,7 +12,25 @@ from datetime import datetime
 from enum import Enum
 from typing import List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+# ── CPN Place Names ──────────────────────────────────────────────────────────
+
+class PlaceName(str, Enum):
+    """Canonical place names in the Colored Petri Net."""
+    PRECON_PENDING = "precon_pending"
+    PRECON_DONE = "precon_done"
+    PEXPLOIT_READY = "pexploit_ready"
+    PEXPLOIT_DONE = "pexploit_done"
+    PVERIFY_PENDING = "pverify_pending"
+    PVERIFY_DONE = "pverify_done"
+    PPATCH_READY = "ppatch_ready"
+    PPATCH_DONE = "ppatch_done"
+    PERROR = "perror"
+
+
+_VALID_PLACE_NAMES = {p.value for p in PlaceName}
 
 
 # ── Webhook Ingress ──────────────────────────────────────────────────────────
@@ -106,6 +124,9 @@ class ExploitOutput(BaseModel):
     attempt_number: int = Field(
         1, description="Which attempt this is (1-indexed)"
     )
+    extracted_secret: Optional[str] = Field(
+        None, description="Secret value extracted from sandbox stdout (e.g. FLAG{...})"
+    )
 
 
 # ── Agent 3: Patching ────────────────────────────────────────────────────────
@@ -152,7 +173,26 @@ class VerificationResult(BaseModel):
     )
     failure_category: Optional[str] = Field(
         None,
-        description="Category of failure: timeout | wrong_output | exception | no_marker | no_evidence",
+        description=(
+            "Category: not_confirmed | no_marker | no_evidence | "
+            "hmac_missing | hmac_mismatch | timeout | wrong_output | exception"
+        ),
+    )
+
+
+# ── Sandbox ──────────────────────────────────────────────────────────────────
+
+class SandboxResult(BaseModel):
+    """Structured result from sandbox execution."""
+    success: bool = Field(..., description="True if the payload exited with code 0")
+    stdout: str = Field("", description="Captured stdout from sandbox")
+    stderr: str = Field("", description="Captured stderr from sandbox")
+    exit_code: int = Field(-1, description="Process exit code")
+    hmac_token: Optional[str] = Field(
+        None, description="HMAC attestation token extracted from stdout (Docker mode)"
+    )
+    execution_mode: str = Field(
+        "subprocess", description="'subprocess' or 'docker'"
     )
 
 
@@ -170,7 +210,7 @@ class MasterState(BaseModel):
     """The coloured token that flows through the Petri net."""
     trace_id: str
     task_id: str
-    current_node: str = "ingress"
+    current_node: str = PlaceName.PRECON_PENDING.value
     retry_count: int = 0
     webhook: Optional[WebhookPayload] = None
     recon: Optional[ReconOutput] = None
@@ -179,6 +219,16 @@ class MasterState(BaseModel):
     patch: Optional[PatchOutput] = None
     error: Optional[str] = None
     completed: bool = False
+
+    @field_validator("current_node")
+    @classmethod
+    def _validate_place_name(cls, v: str) -> str:
+        if v not in _VALID_PLACE_NAMES:
+            raise ValueError(
+                f"Invalid CPN place name '{v}'. "
+                f"Must be one of: {sorted(_VALID_PLACE_NAMES)}"
+            )
+        return v
     # Exploit retry feedback
     attempt_history: List[AttemptRecord] = Field(
         default_factory=list,

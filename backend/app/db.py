@@ -69,7 +69,7 @@ def atomic():
 
 # ── Checkpoint CRUD ──────────────────────────────────────────────────────────
 
-def save_checkpoint(trace_id: str, node_id: str, state: Dict[str, Any]) -> None:
+def save_checkpoint(trace_id: str, node_id: str, state: str | Dict[str, Any]) -> None:
     """Atomically upsert the master state for a (trace, node) pair."""
     with atomic() as conn:
         conn.execute(
@@ -80,7 +80,7 @@ def save_checkpoint(trace_id: str, node_id: str, state: Dict[str, Any]) -> None:
             DO UPDATE SET state_json = excluded.state_json,
                           created_at = excluded.created_at
             """,
-            (trace_id, node_id, json.dumps(state), _now()),
+            (trace_id, node_id, state if isinstance(state, str) else json.dumps(state), _now()),
         )
 
 
@@ -91,7 +91,7 @@ def load_latest_checkpoint(trace_id: str) -> Optional[Dict[str, Any]]:
         "SELECT state_json FROM checkpoints WHERE trace_id = ? ORDER BY created_at DESC LIMIT 1",
         (trace_id,),
     ).fetchone()
-    return json.loads(row["state_json"]) if row else None
+    return row["state_json"] if row else None
 
 
 # ── Execution log CRUD ───────────────────────────────────────────────────────

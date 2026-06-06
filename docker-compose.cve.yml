@@ -1,0 +1,49 @@
+version: '3.8'
+
+services:
+  # The vulnerable target application (CVE-2021-44228)
+  log4shell-target:
+    image: ghcr.io/christophetd/log4shell-vulnerable-app
+    container_name: log4shell-target
+    ports:
+      - "8080:8080"
+    networks:
+      - aegis-net
+
+  # The AEGIS backend API
+  aegis-backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: aegis-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - TARGET_URL=http://log4shell-target:8080
+      - DEMO_MODE=CVE-2021-44228
+    networks:
+      - aegis-net
+
+  # The AEGIS dashboard frontend
+  aegis-frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: aegis-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+    depends_on:
+      - aegis-backend
+    networks:
+      - aegis-net
+
+networks:
+  aegis-net:
+    driver: bridge

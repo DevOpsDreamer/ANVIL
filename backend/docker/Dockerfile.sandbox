@@ -1,0 +1,4 @@
+FROM python:3.11-slim
+COPY shim_entrypoint.py /shim_entrypoint.py
+RUN echo "FLAG{test_secret_value}" > /tmp/secret_flag.txt
+ENTRYPOINT ["python", "/shim_entrypoint.py"]

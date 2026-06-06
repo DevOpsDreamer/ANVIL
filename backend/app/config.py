@@ -29,12 +29,8 @@ CELERY_RESULT_BACKEND: str = os.getenv("CELERY_RESULT_BACKEND", REDIS_URL)
 SANDBOX_TIMEOUT_SECONDS: int = int(os.getenv("SANDBOX_TIMEOUT_SECONDS", "15"))
 SANDBOX_MAX_RETRIES: int = int(os.getenv("SANDBOX_MAX_RETRIES", "3"))
 
-# ── Omium / OpenTelemetry ─────────────────────────────────────────────────────
-OMIUM_API_KEY: str = os.getenv("OMIUM_API_KEY", "")
-OMIUM_ENDPOINT: str = os.getenv(
-    "OMIUM_ENDPOINT",
-    "https://api.omium.ai",
-)
+# ── OpenTelemetry ─────────────────────────────────────────────────────────────
+OTEL_EXPORTER_OTLP_ENDPOINT: str = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
 SERVICE_NAME: str = os.getenv("SERVICE_NAME", "red-team-engine")
 
 # ── Target Application ────────────────────────────────────────────────────────

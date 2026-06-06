@@ -1,11 +1,8 @@
 """
-AST-Validated Subprocess Sandbox — Fail-Closed execution layer.
+AST-Validated Sandbox — Fail-Closed execution layer.
 
-Replaces Docker with a native Python subprocess that is protected by:
-1. AST filtering — blocks dangerous imports/calls before execution.
-2. Stripped environment — payload cannot read host env vars.
-3. Hard timeout — prevents infinite loops from locking the system.
-4. Signature hashing — prevents the exact same failed call from retrying.
+Supports both Docker container execution (with HMAC attestation) and 
+native Python subprocess execution (with AST filtering).
 
 If ANY validation step fails, the sandbox refuses to execute (fail-closed).
 """
@@ -19,9 +16,10 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import Dict, Optional, Set, Tuple
+from typing import Dict, Optional, Set, Tuple, Protocol
 
 from app.config import SANDBOX_TIMEOUT_SECONDS
+from app.schemas import SandboxResult
 
 logger = logging.getLogger(__name__)
 
@@ -47,15 +45,6 @@ _BLOCKED_FUNCTIONS: Set[str] = {
     "importlib.import_module",
     "ctypes.cdll",
 }
-
-# ── Signature-hash dedup (circuit breaker) ───────────────────────────────────
-
-_seen_hashes: Dict[str, int] = {}
-
-
-def _signature_hash(code: str) -> str:
-    return hashlib.sha256(code.encode()).hexdigest()
-
 
 # ── AST validation ───────────────────────────────────────────────────────────
 
@@ -128,13 +117,11 @@ def validate_code(code: str) -> Tuple[bool, str]:
     Parse and AST-validate *code*. Returns (ok, message).
     If ok is False, the code MUST NOT be executed.
     """
-    # Step 1: syntax check
     try:
         tree = ast.parse(code)
     except SyntaxError as exc:
         return False, f"SyntaxError: {exc}"
 
-    # Step 2: dangerous-node check
     visitor = _DangerousNodeVisitor()
     visitor.visit(tree)
     if visitor.violations:
@@ -143,81 +130,150 @@ def validate_code(code: str) -> Tuple[bool, str]:
     return True, "OK"
 
 
-# ── Execution ────────────────────────────────────────────────────────────────
+# ── Execution Interfaces ──────────────────────────────────────────────────────
+
+class SandboxInterface(Protocol):
+    def execute(self, code: str, *, timeout: int = SANDBOX_TIMEOUT_SECONDS, hmac_key: Optional[bytes] = None, hmac_nonce: Optional[bytes] = None) -> SandboxResult:
+        ...
+
+class DockerSandbox:
+    def execute(self, code: str, *, timeout: int = SANDBOX_TIMEOUT_SECONDS, hmac_key: Optional[bytes] = None, hmac_nonce: Optional[bytes] = None) -> SandboxResult:
+        """Execute payload in an ephemeral Docker container."""
+        # AST validation
+        ok, reason = validate_code(code)
+        if not ok:
+            logger.warning("Sandbox rejected payload: %s", reason)
+            return SandboxResult(success=False, stderr=reason, execution_mode="docker")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            script_path = temp_path / "payload.py"
+            script_path.write_text(code)
+            
+            env = {}
+            if hmac_key and hmac_nonce:
+                env["HMAC_KEY"] = hmac_key.hex()
+                env["HMAC_NONCE"] = hmac_nonce.hex()
+            
+            docker_cmd = [
+                "docker", "run", "--rm",
+                "--network", "none",
+                "--memory", "256m",
+                "--cpus", "0.5",
+                "-v", f"{temp_dir}:/payload:ro",
+            ]
+            
+            for k, v in env.items():
+                docker_cmd.extend(["-e", f"{k}={v}"])
+                
+            docker_cmd.extend(["aegis-sandbox:latest", "/payload/payload.py"])
+            
+            try:
+                result = subprocess.run(
+                    docker_cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                )
+                return SandboxResult(
+                    success=result.returncode == 0,
+                    stdout=result.stdout,
+                    stderr=result.stderr,
+                    exit_code=result.returncode,
+                    execution_mode="docker"
+                )
+            except subprocess.TimeoutExpired:
+                msg = f"Docker Sandbox timeout after {timeout}s"
+                logger.warning(msg)
+                return SandboxResult(success=False, stderr=msg, execution_mode="docker")
+            except Exception as exc:
+                return SandboxResult(success=False, stderr=f"Docker Sandbox error: {exc}", execution_mode="docker")
+
+
+class SubprocessSandbox:
+    def execute(self, code: str, *, timeout: int = SANDBOX_TIMEOUT_SECONDS, hmac_key: Optional[bytes] = None, hmac_nonce: Optional[bytes] = None) -> SandboxResult:
+        """Execute payload in a native Python subprocess."""
+        # AST validation
+        ok, reason = validate_code(code)
+        if not ok:
+            logger.warning("Sandbox rejected payload: %s", reason)
+            return SandboxResult(success=False, stderr=reason, execution_mode="subprocess")
+
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".py", delete=False, dir="."
+        ) as tmp:
+            tmp.write(code)
+            tmp_path = Path(tmp.name)
+
+        try:
+            import os as _os
+            safe_env = dict(_os.environ)
+
+            # Strip ALL known credential / secret variables
+            _DANGEROUS_VARS = {
+                "OPENAI_API_KEY", "GITHUB_TOKEN", "GITHUB_CLIENT_ID",
+                "GITHUB_CLIENT_SECRET", "SESSION_SECRET", "OMIUM_API_KEY",
+                "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
+                "AZURE_CLIENT_SECRET", "GCP_SERVICE_ACCOUNT_KEY",
+                "DATABASE_URL", "DB_PASSWORD", "REDIS_URL",
+                "SECRET_KEY", "JWT_SECRET", "COOKIE_SECRET",
+            }
+            for var in _DANGEROUS_VARS:
+                safe_env.pop(var, None)
+
+            result = subprocess.run(
+                [sys.executable, str(tmp_path)],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                env=safe_env,
+                cwd=".",
+            )
+            return SandboxResult(
+                success=result.returncode == 0,
+                stdout=result.stdout,
+                stderr=result.stderr,
+                exit_code=result.returncode,
+                execution_mode="subprocess"
+            )
+        except subprocess.TimeoutExpired:
+            msg = f"Sandbox timeout after {timeout}s"
+            logger.warning(msg)
+            return SandboxResult(success=False, stderr=msg, execution_mode="subprocess")
+        except Exception as exc:
+            return SandboxResult(success=False, stderr=f"Sandbox error: {exc}", execution_mode="subprocess")
+        finally:
+            tmp_path.unlink(missing_ok=True)
+
+
+def get_sandbox() -> SandboxInterface:
+    """Factory to return the appropriate sandbox implementation."""
+    # Since Docker is reported as not working on the host, we fall back to subprocess.
+    # In a fully healthy environment, we would check if docker is running here.
+    return SubprocessSandbox()
+
+# Signature-hash dedup (circuit breaker) - moved state to db later, for now memory wrapper
+_seen_hashes: Dict[str, int] = {}
+
+def _signature_hash(code: str) -> str:
+    return hashlib.sha256(code.encode()).hexdigest()
 
 def execute_payload(
     code: str,
     *,
     timeout: int = SANDBOX_TIMEOUT_SECONDS,
     max_retries: int = 3,
+    hmac_key: Optional[bytes] = None,
+    hmac_nonce: Optional[bytes] = None
 ) -> Tuple[bool, str, str]:
-    """
-    Execute *code* in a restricted subprocess.
-
-    Returns (success, stdout, stderr).
-    Fail-closed: any validation failure → (False, "", error_msg).
-    """
-    # ── Circuit breaker: signature dedup ──────────────────────────────────
+    """Legacy wrapper for backward compatibility."""
     sig = _signature_hash(code)
     _seen_hashes[sig] = _seen_hashes.get(sig, 0) + 1
     if _seen_hashes[sig] > max_retries:
         msg = f"Circuit breaker: payload hash {sig[:12]}… attempted {_seen_hashes[sig]} times. Blocked."
         logger.warning(msg)
         return False, "", msg
-
-    # ── AST validation ───────────────────────────────────────────────────
-    ok, reason = validate_code(code)
-    if not ok:
-        logger.warning("Sandbox rejected payload: %s", reason)
-        return False, "", reason
-
-    # ── Write to temp file & execute ─────────────────────────────────────
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".py", delete=False, dir="."
-    ) as tmp:
-        tmp.write(code)
-        tmp_path = Path(tmp.name)
-
-    try:
-        # Build a safe environment that allows Python + networking to work
-        # on Windows, while stripping all sensitive credentials.
-        #
-        # Strategy: start from the FULL host environment (so SSL, DNS, proxy,
-        # and Python path resolution all work), then DELETE known-dangerous
-        # variables that could leak secrets to the payload.
-        import os as _os
-        safe_env = dict(_os.environ)
-
-        # Strip ALL known credential / secret variables
-        _DANGEROUS_VARS = {
-            "OPENAI_API_KEY", "GITHUB_TOKEN", "GITHUB_CLIENT_ID",
-            "GITHUB_CLIENT_SECRET", "SESSION_SECRET", "OMIUM_API_KEY",
-            "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
-            "AZURE_CLIENT_SECRET", "GCP_SERVICE_ACCOUNT_KEY",
-            "DATABASE_URL", "DB_PASSWORD", "REDIS_URL",
-            "SECRET_KEY", "JWT_SECRET", "COOKIE_SECRET",
-        }
-        for var in _DANGEROUS_VARS:
-            safe_env.pop(var, None)
-
-        result = subprocess.run(
-            [sys.executable, str(tmp_path)],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            env=safe_env,
-            cwd=".",
-        )
-        return (
-            result.returncode == 0,
-            result.stdout,
-            result.stderr,
-        )
-    except subprocess.TimeoutExpired:
-        msg = f"Sandbox timeout after {timeout}s"
-        logger.warning(msg)
-        return False, "", msg
-    except Exception as exc:
-        return False, "", f"Sandbox error: {exc}"
-    finally:
-        tmp_path.unlink(missing_ok=True)
+        
+    sandbox = get_sandbox()
+    res = sandbox.execute(code, timeout=timeout, hmac_key=hmac_key, hmac_nonce=hmac_nonce)
+    return res.success, res.stdout, res.stderr
