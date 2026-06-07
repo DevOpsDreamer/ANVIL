@@ -123,3 +123,9 @@ async def list_all_scans(request: Request):
     """List all scans for the current session."""
     require_auth(request)
     return JSONResponse(list_scans())
+
+@router.get("/results")
+async def list_all_results(request: Request):
+    """Alias for /scans to fetch all scan results for the history UI."""
+    require_auth(request)
+    return JSONResponse(list_scans())

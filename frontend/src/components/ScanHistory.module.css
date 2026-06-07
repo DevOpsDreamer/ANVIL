@@ -1,0 +1,66 @@
+.historyContainer {
+  margin: 2rem 0;
+  padding: 1rem;
+  background-color: var(--card-bg, #1e1e1e);
+  border-radius: 8px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+}
+
+.historyContainer h2 {
+  margin-top: 0;
+  margin-bottom: 1rem;
+  font-size: 1.5rem;
+  color: var(--text-color, #ffffff);
+}
+
+.scanTable {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.scanTable th,
+.scanTable td {
+  padding: 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border-color, #333);
+}
+
+.scanTable th {
+  background-color: var(--table-header-bg, #252525);
+  font-weight: 600;
+  color: var(--text-muted, #aaa);
+}
+
+.scanTable tr:hover {
+  background-color: var(--row-hover-bg, #2a2a2a);
+}
+
+.statusBadge {
+  display: inline-block;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.statusBadge.completed {
+  background-color: rgba(46, 204, 113, 0.2);
+  color: #2ecc71;
+}
+
+.statusBadge.running {
+  background-color: rgba(52, 152, 219, 0.2);
+  color: #3498db;
+}
+
+.statusBadge.failed {
+  background-color: rgba(231, 76, 60, 0.2);
+  color: #e74c3c;
+}
+
+.loading {
+  padding: 2rem;
+  text-align: center;
+  color: var(--text-muted, #aaa);
+}
